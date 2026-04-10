@@ -1,3 +1,20 @@
+from flask import Flask
+import threading
+
+# Код для обмана Render (чтобы он видел активный порт)
+app = Flask(__name__)
+@app.route('/')
+def health_check():
+    return "Bot is alive!", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# Запуск сервера в фоне
+threading.Thread(target=run_flask, daemon=True).start()
+
+# --- ДАЛЕЕ ВЕСЬ ТВОЙ СТАРЫЙ КОД (import asyncio, и т.д.) ---
 # -*- coding: utf-8 -*-
 
 import asyncio
