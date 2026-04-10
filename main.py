@@ -1,29 +1,30 @@
-from flask import Flask
-import threading
+# -*- coding: utf-8 -*-
 
-# Код для обмана Render (чтобы он видел активный порт)
+import os  # ОС должен быть в самом верху!
+import asyncio
+import json
+import threading
+from datetime import datetime, timedelta
+from flask import Flask
+from telethon import TelegramClient
+from telethon.sessions import StringSession
+from telethon.errors import FloodWaitError
+
+# --- БЛОК ДЛЯ RENDER (FLASK) ---
 app = Flask(__name__)
+
 @app.route('/')
 def health_check():
     return "Bot is alive!", 200
 
 def run_flask():
+    # Берем порт из переменной окружения Render или ставим 8080
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# Запуск сервера в фоне
+# Запускаем сервер в отдельном потоке
 threading.Thread(target=run_flask, daemon=True).start()
-
-# --- ДАЛЕЕ ВЕСЬ ТВОЙ СТАРЫЙ КОД (import asyncio, и т.д.) ---
-# -*- coding: utf-8 -*-
-
-import asyncio
-import json
-import os
-from datetime import datetime, timedelta
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.errors import FloodWaitError
+# ------------------------------
 
 API_ID   = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
@@ -59,7 +60,6 @@ ALL_TASKS = [
 
 CONFIG_FILE = "schedule.json"
 
-
 def load_schedule():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -69,16 +69,13 @@ def load_schedule():
             return {}
     return {}
 
-
 def save_schedule(schedule):
     with open(CONFIG_FILE, "w") as f:
         json.dump(schedule, f, indent=2)
 
-
 async def send_task(client, task, key, schedule):
     now = datetime.now()
 
-    # если нет записи — отправляем сразу
     if key not in schedule:
         next_send = now
     else:
@@ -87,51 +84,43 @@ async def send_task(client, task, key, schedule):
     if now >= next_send:
         try:
             print(f"➡️ Пытаюсь отправить {task['message']} в {task['bot']}")
-
             await client.send_message(task["bot"], task["message"])
-
+            
             next_send = now + timedelta(minutes=task["minutes"])
             schedule[key] = next_send.isoformat()
             save_schedule(schedule)
-
             print(f"[{now.strftime('%H:%M:%S')}] ✅ {task['bot']} ← {task['message']}")
-
         except FloodWaitError as e:
             print(f"⏳ FloodWait {e.seconds}s")
             await asyncio.sleep(e.seconds)
-
         except Exception as e:
             print(f"❌ Ошибка: {e}")
 
-
 async def run_account(session, tasks, acc_id):
     async with TelegramClient(StringSession(session), API_ID, API_HASH) as client:
-        me = await client.get_me()
-        print(f"✅ Аккаунт {acc_id}: @{me.username}")
+        try:
+            me = await client.get_me()
+            print(f"✅ Аккаунт {acc_id}: @{me.username}")
+        except Exception as e:
+            print(f"❌ Аккаунт {acc_id} ошибка входа: {e}")
+            return
 
         while True:
             schedule = load_schedule()
-
             for i, task in enumerate(tasks):
                 key = f"acc{acc_id}_task{i}"
                 await send_task(client, task, key, schedule)
-
             await asyncio.sleep(10)
-
 
 async def main():
     print("🚀 Запуск 4 аккаунтов...")
-
     await asyncio.gather(*[
         run_account(SESSIONS[i], ALL_TASKS[i], i + 1)
-        for i in range(4)
+        for i in range(len(SESSIONS))
     ])
 
-
-# ✅ ВОТ ГЛАВНЫЙ ФИКС
 if __name__ == "__main__":
     import time
-
     while True:
         try:
             asyncio.run(main())
