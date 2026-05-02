@@ -18,23 +18,22 @@ def health_check():
     return "Bot is alive!", 200
 
 def run_flask():
-    # Берем порт из переменной окружения Render или ставим 8080
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# Запускаем сервер в отдельном потоке
 threading.Thread(target=run_flask, daemon=True).start()
 # ------------------------------
 
 API_ID   = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
-# 4 сессии
+# 5 сессий
 SESSIONS = [
     os.environ["SESSION_1"],
     os.environ["SESSION_2"],
     os.environ["SESSION_3"],
     os.environ["SESSION_4"],
+    os.environ["SESSION_5"],  # ← новый аккаунт
 ]
 
 # задачи
@@ -53,6 +52,10 @@ ALL_TASKS = [
         {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
     ],
     # АКК 4
+    [
+        {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
+    ],
+    # АКК 5
     [
         {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
     ],
@@ -113,7 +116,7 @@ async def run_account(session, tasks, acc_id):
             await asyncio.sleep(10)
 
 async def main():
-    print("🚀 Запуск 4 аккаунтов...")
+    print("🚀 Запуск 5 аккаунтов...")
     await asyncio.gather(*[
         run_account(SESSIONS[i], ALL_TASKS[i], i + 1)
         for i in range(len(SESSIONS))
