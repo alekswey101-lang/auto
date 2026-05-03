@@ -27,13 +27,14 @@ threading.Thread(target=run_flask, daemon=True).start()
 API_ID   = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
-# 5 сессий
+# 6 сессий
 SESSIONS = [
     os.environ["SESSION_1"],
     os.environ["SESSION_2"],
     os.environ["SESSION_3"],
     os.environ["SESSION_4"],
-    os.environ["SESSION_5"],  # ← новый аккаунт
+    os.environ["SESSION_5"],
+    os.environ["SESSION_6"],  # ← Добавлена шестая сессия
 ]
 
 # задачи
@@ -56,6 +57,10 @@ ALL_TASKS = [
         {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
     ],
     # АКК 5
+    [
+        {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
+    ],
+    # АКК 6 (НОВЫЙ)
     [
         {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
     ],
@@ -92,7 +97,7 @@ async def send_task(client, task, key, schedule):
             next_send = now + timedelta(minutes=task["minutes"])
             schedule[key] = next_send.isoformat()
             save_schedule(schedule)
-            print(f"[{now.strftime('%H:%M:%S')}] ✅ {task['bot']} ← {task['message']}")
+            print(f"[{now.strftime('%H:%M:%S')}] ✅ {task['bot']} ← {task['message']} (Акк: {key})")
         except FloodWaitError as e:
             print(f"⏳ FloodWait {e.seconds}s")
             await asyncio.sleep(e.seconds)
@@ -103,7 +108,7 @@ async def run_account(session, tasks, acc_id):
     async with TelegramClient(StringSession(session), API_ID, API_HASH) as client:
         try:
             me = await client.get_me()
-            print(f"✅ Аккаунт {acc_id}: @{me.username}")
+            print(f"✅ Аккаунт {acc_id}: @{me.username if me.username else me.id}")
         except Exception as e:
             print(f"❌ Аккаунт {acc_id} ошибка входа: {e}")
             return
@@ -116,7 +121,7 @@ async def run_account(session, tasks, acc_id):
             await asyncio.sleep(10)
 
 async def main():
-    print("🚀 Запуск 5 аккаунтов...")
+    print(f"🚀 Запуск {len(SESSIONS)} аккаунтов...")
     await asyncio.gather(*[
         run_account(SESSIONS[i], ALL_TASKS[i], i + 1)
         for i in range(len(SESSIONS))
@@ -128,5 +133,5 @@ if __name__ == "__main__":
         try:
             asyncio.run(main())
         except Exception as e:
-            print(f"⚠️ Ошибка: {e}, рестарт через 30 сек")
+            print(f"⚠️ Ошибка в main: {e}, рестарт через 30 сек")
             time.sleep(30)
