@@ -18,26 +18,27 @@ def health_check():
     return "Bot is alive!", 200
 
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))
+    # Render сам назначит порт через переменную PORT
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
+# Запускаем Flask в отдельном потоке
 threading.Thread(target=run_flask, daemon=True).start()
 # ------------------------------
 
 API_ID   = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
-# 6 сессий
+# Возвращаемся к 5 сессиям
 SESSIONS = [
     os.environ["SESSION_1"],
     os.environ["SESSION_2"],
     os.environ["SESSION_3"],
     os.environ["SESSION_4"],
     os.environ["SESSION_5"],
-    os.environ["SESSION_6"],  # ← Добавлена шестая сессия
 ]
 
-# задачи
+# задачи для 5 аккаунтов
 ALL_TASKS = [
     # АКК 1
     [
@@ -57,10 +58,6 @@ ALL_TASKS = [
         {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
     ],
     # АКК 5
-    [
-        {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
-    ],
-    # АКК 6 (НОВЫЙ)
     [
         {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
     ],
@@ -87,7 +84,10 @@ async def send_task(client, task, key, schedule):
     if key not in schedule:
         next_send = now
     else:
-        next_send = datetime.fromisoformat(schedule[key])
+        try:
+            next_send = datetime.fromisoformat(schedule[key])
+        except:
+            next_send = now
 
     if now >= next_send:
         try:
@@ -105,10 +105,13 @@ async def send_task(client, task, key, schedule):
             print(f"❌ Ошибка: {e}")
 
 async def run_account(session, tasks, acc_id):
+    # Добавляем небольшую задержку перед входом, чтобы не грузить CPU
+    await asyncio.sleep(acc_id * 3) 
+    
     async with TelegramClient(StringSession(session), API_ID, API_HASH) as client:
         try:
             me = await client.get_me()
-            print(f"✅ Аккаунт {acc_id}: @{me.username if me.username else me.id}")
+            print(f"✅ Аккаунт {acc_id}: @{me.username if me.username else me.id} в сети")
         except Exception as e:
             print(f"❌ Аккаунт {acc_id} ошибка входа: {e}")
             return
@@ -118,7 +121,7 @@ async def run_account(session, tasks, acc_id):
             for i, task in enumerate(tasks):
                 key = f"acc{acc_id}_task{i}"
                 await send_task(client, task, key, schedule)
-            await asyncio.sleep(10)
+            await asyncio.sleep(30) # Увеличили паузу проверки для стабильности
 
 async def main():
     print(f"🚀 Запуск {len(SESSIONS)} аккаунтов...")
