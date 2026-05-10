@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import os  # ОС должен быть в самом верху!
+import os
 import asyncio
 import json
 import threading
@@ -10,7 +10,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
-# --- БЛОК ДЛЯ RENDER (FLASK) ---
+# --- ВЕБ-СЕРВЕР ДЛЯ ПОДДЕРЖКИ ЖИЗНИ (RENDER + CRON-JOB) ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -18,18 +18,16 @@ def health_check():
     return "Bot is alive!", 200
 
 def run_flask():
-    # Render сам назначит порт через переменную PORT
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# Запускаем Flask в отдельном потоке
 threading.Thread(target=run_flask, daemon=True).start()
-# ------------------------------
 
+# --- НАСТРОЙКИ API ---
 API_ID   = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
-# Возвращаемся к 5 сессиям
+# 5 рабочих сессий
 SESSIONS = [
     os.environ["SESSION_1"],
     os.environ["SESSION_2"],
@@ -38,29 +36,13 @@ SESSIONS = [
     os.environ["SESSION_5"],
 ]
 
-# задачи для 5 аккаунтов
+# Стандартные цикличные задачи
 ALL_TASKS = [
-    # АКК 1
-    [
-        {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
-        {"bot": "@iris_moon_bot",    "message": "фарма",     "minutes": 240},
-    ],
-    # АКК 2
-    [
-        {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
-    ],
-    # АКК 3
-    [
-        {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
-    ],
-    # АКК 4
-    [
-        {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
-    ],
-    # АКК 5
-    [
-        {"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121},
-    ],
+    [{"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121}, {"bot": "@iris_moon_bot", "message": "фарма", "minutes": 240}], # Акк 1
+    [{"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121}], # Акк 2
+    [{"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121}], # Акк 3
+    [{"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121}], # Акк 4
+    [{"bot": "@phonegetcardsbot", "message": "ткарточка", "minutes": 121}], # Акк 5
 ]
 
 CONFIG_FILE = "schedule.json"
@@ -68,73 +50,90 @@ CONFIG_FILE = "schedule.json"
 def load_schedule():
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE) as f:
-                return json.load(f)
-        except:
-            return {}
+            with open(CONFIG_FILE) as f: return json.load(f)
+        except: return {}
     return {}
 
 def save_schedule(schedule):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(schedule, f, indent=2)
+    with open(CONFIG_FILE, "w") as f: json.dump(schedule, f, indent=2)
 
-async def send_task(client, task, key, schedule):
-    now = datetime.now()
+async def click_inline_button(client, bot_username, button_text):
+    """Логика поиска и нажатия кнопки"""
+    try:
+        await asyncio.sleep(5) 
+        async for message in client.iter_messages(bot_username, limit=3):
+            if message.reply_markup:
+                for row in message.reply_markup.rows:
+                    for button in row.buttons:
+                        if button_text in button.text:
+                            await message.click(button)
+                            return True
+    except Exception as e:
+        print(f"❌ Ошибка кнопки: {e}")
+    return False
 
-    if key not in schedule:
-        next_send = now
-    else:
+async def run_daily_farm(client, acc_id):
+    """Сбор с фермы в 02:05 по Шымкенту (21:05 UTC)"""
+    if acc_id == 5: # Пятый аккаунт отдыхает
+        return
+
+    while True:
+        now = datetime.utcnow()
+        # Ставим цель на 21:05 UTC (это 02:05 в Шымкенте)
+        target = now.replace(hour=21, minute=5, second=0, microsecond=0)
+        
+        if now > target:
+            target += timedelta(days=1)
+        
+        wait_seconds = (target - now).total_seconds()
+        print(f"⏳ Акк {acc_id}: сбор фермы через {int(wait_seconds/3600)}ч")
+        
+        await asyncio.sleep(wait_seconds)
+        
         try:
-            next_send = datetime.fromisoformat(schedule[key])
-        except:
-            next_send = now
-
-    if now >= next_send:
-        try:
-            print(f"➡️ Пытаюсь отправить {task['message']} в {task['bot']}")
-            await client.send_message(task["bot"], task["message"])
-            
-            next_send = now + timedelta(minutes=task["minutes"])
-            schedule[key] = next_send.isoformat()
-            save_schedule(schedule)
-            print(f"[{now.strftime('%H:%M:%S')}] ✅ {task['bot']} ← {task['message']} (Акк: {key})")
-        except FloodWaitError as e:
-            print(f"⏳ FloodWait {e.seconds}s")
-            await asyncio.sleep(e.seconds)
+            print(f"🚜 Акк {acc_id}: Снимаю деньги...")
+            await client.send_message("@phonegetcardsbot", "/tfarm")
+            success = await click_inline_button(client, "@phonegetcardsbot", "Снять деньги с фермы")
+            if success:
+                print(f"✅ Акк {acc_id}: Деньги сняты")
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
+            print(f"❌ Ошибка фермы акк {acc_id}: {e}")
+        
+        await asyncio.sleep(60)
 
 async def run_account(session, tasks, acc_id):
-    # Добавляем небольшую задержку перед входом, чтобы не грузить CPU
-    await asyncio.sleep(acc_id * 3) 
-    
+    """Запуск одного аккаунта"""
+    await asyncio.sleep(acc_id * 5) # Плавный запуск
     async with TelegramClient(StringSession(session), API_ID, API_HASH) as client:
-        try:
-            me = await client.get_me()
-            print(f"✅ Аккаунт {acc_id}: @{me.username if me.username else me.id} в сети")
-        except Exception as e:
-            print(f"❌ Аккаунт {acc_id} ошибка входа: {e}")
-            return
+        print(f"✅ Аккаунт {acc_id} в сети")
+        
+        # Фоновая задача на ежедневный сбор
+        asyncio.create_task(run_daily_farm(client, acc_id))
 
         while True:
             schedule = load_schedule()
             for i, task in enumerate(tasks):
                 key = f"acc{acc_id}_task{i}"
-                await send_task(client, task, key, schedule)
-            await asyncio.sleep(30) # Увеличили паузу проверки для стабильности
+                now = datetime.now()
+                next_send = datetime.fromisoformat(schedule.get(key, now.isoformat()))
+                
+                if now >= next_send:
+                    try:
+                        await client.send_message(task["bot"], task["message"])
+                        schedule[key] = (now + timedelta(minutes=task["minutes"])).isoformat()
+                        save_schedule(schedule)
+                        print(f"[{now.strftime('%H:%M')}] ✅ Сообщение от Акк {acc_id}")
+                    except Exception as e:
+                        print(f"❌ Ошибка отправки: {e}")
+            
+            await asyncio.sleep(30)
 
 async def main():
-    print(f"🚀 Запуск {len(SESSIONS)} аккаунтов...")
-    await asyncio.gather(*[
-        run_account(SESSIONS[i], ALL_TASKS[i], i + 1)
-        for i in range(len(SESSIONS))
-    ])
+    print(f"🚀 Старт системы на {len(SESSIONS)} аккаунтов...")
+    await asyncio.gather(*[run_account(SESSIONS[i], ALL_TASKS[i], i + 1) for i in range(len(SESSIONS))])
 
 if __name__ == "__main__":
-    import time
-    while True:
-        try:
-            asyncio.run(main())
-        except Exception as e:
-            print(f"⚠️ Ошибка в main: {e}, рестарт через 30 сек")
-            time.sleep(30)
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"💥 Критическая ошибка: {e}")
