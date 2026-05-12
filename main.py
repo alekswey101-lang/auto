@@ -6,7 +6,7 @@ import json
 import threading
 from datetime import datetime, timedelta
 from flask import Flask
-from telethon import TelegramClient, events
+from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 # --- FLASK SERVER ---
@@ -44,23 +44,31 @@ def load_schedule():
 def save_schedule(schedule):
     with open(CONFIG_FILE, "w") as f: json.dump(schedule, f, indent=2)
 
-async def click_inline_button(client, bot_username, button_text, target_data="farm_claim"):
+async def click_farm_buttons(client, bot_username):
+    """Ищет и нажимает ВСЕ кнопки для сбора фермы"""
     try:
-        await asyncio.sleep(5) 
+        await asyncio.sleep(5) # Ждем прогрузки сообщения
         async for message in client.iter_messages(bot_username, limit=3):
             if message.reply_markup:
+                clicked = False
                 for row in message.reply_markup.rows:
                     for button in row.buttons:
-                        current_data = ""
-                        if hasattr(button, 'data') and button.data:
-                            current_data = button.data.decode('utf-8')
+                        # Проверяем техническую дату кнопки
+                        data = button.data.decode('utf-8') if hasattr(button, 'data') and button.data else ""
                         
-                        if current_data == target_data or button_text in button.text:
-                            print(f"🎯 Нашел кнопку! (Data: {current_data})", flush=True)
-                            await message.click(button)
-                            return True
+                        if data == "farm_claim" or "Снять" in button.text:
+                            print(f"🎯 Акк: Нашел кнопку '{button.text}' (data: {data}). Кликаю...", flush=True)
+                            try:
+                                await message.click(button)
+                                clicked = True
+                                await asyncio.sleep(2) # Пауза между кликами, если кнопок много
+                            except Exception as e:
+                                print(f"⚠️ Ошибка при клике на кнопку: {e}", flush=True)
+                
+                if clicked:
+                    return True
     except Exception as e:
-        print(f"❌ Ошибка кнопки: {e}", flush=True)
+        print(f"❌ Ошибка в поиске кнопок: {e}", flush=True)
     return False
 
 async def run_daily_farm(client, acc_id):
@@ -70,28 +78,33 @@ async def run_daily_farm(client, acc_id):
 
     while True:
         now = datetime.utcnow()
-        # Шымкент 02:10 = UTC 21:10
+        # Цель: 02:10 по Шымкенту (21:10 UTC)
         target = now.replace(hour=21, minute=10, second=0, microsecond=0)
-        
         if now > target: target += timedelta(days=1)
         
         wait_secs = (target - now).total_seconds()
-        print(f"⏳ Акк {acc_id}: Ожидание фермы до 02:10 (еще {int(wait_secs/3600)}ч {int((wait_secs%3600)/60)}м)", flush=True)
+        print(f"⏳ Акк {acc_id}: Жду 02:10 для сбора (осталось {int(wait_secs/60)} мин)", flush=True)
         await asyncio.sleep(wait_secs)
         
         try:
-            print(f"🚜 Акк {acc_id}: Сбор по кнопке farm_claim...", flush=True)
+            print(f"🚜 Акк {acc_id}: Запрашиваю /tfarm...", flush=True)
             await client.send_message("@phonegetcardsbot", "/tfarm")
-            if await click_inline_button(client, "@phonegetcardsbot", "Снять деньги"):
-                print(f"✅ Акк {acc_id}: Деньги сняты", flush=True)
+            
+            # Запускаем поиск и клик
+            if await click_farm_buttons(client, "@phonegetcardsbot"):
+                print(f"✅ Акк {acc_id}: Процесс кликов завершен", flush=True)
+            else:
+                print(f"⚠️ Акк {acc_id}: Кнопки не найдены", flush=True)
+                
         except Exception as e:
-            print(f"❌ Ошибка фермы акк {acc_id}: {e}", flush=True)
-        await asyncio.sleep(120)
+            print(f"❌ Ошибка фермы {acc_id}: {e}", flush=True)
+        
+        await asyncio.sleep(600) # Спим 10 минут, чтобы не сработало повторно
 
 async def run_account(session, tasks, acc_id):
     await asyncio.sleep(acc_id * 3)
     async with TelegramClient(StringSession(session), API_ID, API_HASH) as client:
-        print(f"✅ Аккаунт {acc_id} запущен", flush=True)
+        print(f"✅ Аккаунт {acc_id} в сети", flush=True)
         asyncio.create_task(run_daily_farm(client, acc_id))
 
         while True:
@@ -106,7 +119,7 @@ async def run_account(session, tasks, acc_id):
                         schedule[key] = (now + timedelta(minutes=task["minutes"])).isoformat()
                         save_schedule(schedule)
                         print(f"✅ Акк {acc_id}: {task['message']} отправлено", flush=True)
-                    except Exception as e: print(f"❌ Ошибка отправки {acc_id}: {e}", flush=True)
+                    except Exception as e: print(f"❌ Ошибка {acc_id}: {e}", flush=True)
             await asyncio.sleep(30)
 
 async def main():
