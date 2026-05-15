@@ -1,135 +1,137 @@
 # -*- coding: utf-8 -*-
-import os, asyncio, json, threading, random, datetime
+import os, asyncio, random, datetime, threading
 from flask import Flask
-from telethon import TelegramClient, functions, types, events
-from telethon.sessions import StringSession
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup
 
-# --- SERVER ---
+# --- ХОСТИНГ ПРОВЕРКА ---
 app = Flask(__name__)
 @app.route('/')
-def health_check(): return "Userbot is Active!", 200
+def health(): return "Trade Bot is Active", 200
 threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
 
-# --- CONFIG ---
+# --- КОНФИГУРАЦИЯ ---
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSIONS = [os.environ[f"SESSION_{i}"] for i in range(1, 6)]
 
-DEVICES = [
-    {"model": "Samsung SM-S918B", "sys": "Android 13"},
-    {"model": "Pixel 8 Pro", "sys": "Android 14"},
-    {"model": "Xiaomi 13 Ultra", "sys": "Android 13"},
-    {"model": "Samsung SM-G998B", "sys": "Android 12"},
-    {"model": "Pixel 7a", "sys": "Android 13"}
-]
+clients = []
+for i, session_str in enumerate(SESSIONS):
+    clients.append(Client(
+        name=f"acc_{i+1}",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        session_string=session_str
+    ))
 
-async def smart_click(client, message, button):
-    """Клик с чтением ответа (Alert)"""
-    try:
-        await client(functions.messages.ReadHistoryRequest(peer=message.peer_id, max_id=message.id))
-        await asyncio.sleep(random.randint(2, 4))
-        result = await client(functions.messages.GetBotCallbackAnswerRequest(
-            peer=message.peer_id, msg_id=message.id, data=button.data
-        ))
-        return result.message if result and result.message else "Клик ок"
-    except Exception as e: return f"Ошибка: {e}"
+# --- ФУНКЦИЯ КЛИКА ---
+async def smart_click(client, chat_id, message_id, variants, pick_first=False):
+    """
+    variants: список текстов или префиксов callback_data.
+    pick_first: если True, нажмет первую попавшуюся кнопку (кроме 'Назад').
+    """
+    async for message in client.get_chat_history(chat_id, limit=1):
+        if message.id == message_id and message.reply_markup:
+            for row in message.reply_markup.inline_keyboard:
+                for btn in row:
+                    data = btn.callback_data or ""
+                    
+                    # Режим "просто жми первую кнопку" (для выбора модели телефона)
+                    if pick_first:
+                        if "назад" not in btn.text.lower() and "back" not in data.lower():
+                            await client.request_callback_answer(chat_id, message.id, data)
+                            return True, btn.text
+                    
+                    # Обычный режим поиска по списку
+                    elif any(v in btn.text or data.startswith(v) for v in variants):
+                        await client.request_callback_answer(chat_id, message.id, data)
+                        return True, btn.text
+    return False, None
 
-# --- КАРТОЧКИ ---
-async def card_task(client, acc_id):
-    bot_username = "@phonegetcardsbot"
+# --- ЛОГИКА ТРЕЙДА ---
+async def trade_logic(client, target_user, acc_id):
+    bot_chat = "phonegetcardsbot"
+    await client.send_message(bot_chat, f"/trade @{target_user}")
+    
+    # План действий
+    # 1. Добавить телефон
+    # 2. Выбрать тип (Рабочий/Сломанный)
+    # 3. Выбрать редкость (Ширпотреб)
+    # 4. Выбрать любую модель (первая кнопка)
+    # 5. Нажать "Добавить 1 шт."
+    # 6. Подтвердить обмен
+    
+    steps = [
+        {"name": "Начало", "variants": ["Добавить телефон", "trade_add_phone_start"]},
+        {"name": "Тип", "variants": ["✅ Рабочий", "❌ Сломанный", "trd_wrk", "trd_brk"]},
+        {"name": "Редкость", "variants": ["Ширпотреб", "trade_add_rarity"]},
+        {"name": "Модель", "variants": [], "pick_first": True}, # Тут берем любую модель
+        {"name": "Кол-во", "variants": ["Добавить 1 шт.", "trade_add_single", "add_1"]},
+        {"name": "Финал", "variants": ["Подтвердить", "trade_confirm"]}
+    ]
+
+    for step in steps:
+        await asyncio.sleep(5)
+        async for msg in client.get_chat_history(bot_chat, limit=1):
+            if msg.reply_markup:
+                success, clicked = await smart_click(
+                    client, bot_chat, msg.id, 
+                    step.get("variants", []), 
+                    step.get("pick_first", False)
+                )
+                if success:
+                    print(f"✅ [Акк {acc_id}] {step['name']}: {clicked}")
+                    break
+
+# --- КОМАНДЫ ---
+
+@Client.on_message(filters.me & filters.command("trade", prefixes="."))
+async def cmd_trade(client, message):
+    if len(message.command) < 2: return
+    target = message.command[1].replace("@", "")
+    await message.delete()
+    await trade_logic(client, target, clients.index(client) + 1)
+
+@Client.on_message(filters.me & filters.command("farm_now", prefixes="."))
+async def cmd_farm(client, message):
+    await message.edit("🚜 Собираю...")
+    bot = "phonegetcardsbot"
+    await client.send_message(bot, "/tfarm")
+    await asyncio.sleep(5)
+    async for msg in client.get_chat_history(bot, limit=1):
+        if msg.reply_markup:
+            res, _ = await smart_click(client, bot, msg.id, ["Снять деньги", "farm_claim"])
+            if res:
+                await message.edit("✅ Деньги в мешке!")
+                return
+    await message.edit("❌ Не нашел кнопку")
+
+# --- ФОН (Карточки и Ферма) ---
+async def bg_tasks(client, acc_id):
     while True:
         try:
-            print(f"🃏 [Акк {acc_id}] Ткарточка...", flush=True)
-            await client.send_message(bot_username, "ткарточка")
+            # Карточка раз в 2 часа
+            await client.send_message("phonegetcardsbot", "ткарточка")
+            
+            # Ферма (только если не 5-й акк)
+            if acc_id != 5:
+                now = datetime.datetime.utcnow()
+                # 21:10 UTC = 02:10 по Шымкенту
+                if now.hour == 21 and now.minute <= 15:
+                    await client.send_message("phonegetcardsbot", "/tfarm")
+                    await asyncio.sleep(10)
+                    async for msg in client.get_chat_history("phonegetcardsbot", limit=1):
+                        await smart_click(client, "phonegetcardsbot", msg.id, ["Снять деньги", "farm_claim"])
         except: pass
         await asyncio.sleep(121 * 60)
 
-# --- ФЕРМА ---
-async def daily_farm_task(client, acc_id):
-    if acc_id == 5: return 
-    while True:
-        now = datetime.datetime.utcnow()
-        target = now.replace(hour=21, minute=10, second=0, microsecond=0)
-        if now > target: target += datetime.timedelta(days=1)
-        wait_secs = (target - now).total_seconds()
-        print(f"📡 [Акк {acc_id}] Жду сбор {int(wait_secs/60)} мин", flush=True)
-        await asyncio.sleep(wait_secs)
-        await asyncio.sleep((acc_id - 1) * random.randint(60, 150))
-        try:
-            await client.send_message("@phonegetcardsbot", "/tfarm")
-            await asyncio.sleep(10)
-            async for msg in client.iter_messages("@phonegetcardsbot", limit=1):
-                if msg.reply_markup:
-                    for row in msg.reply_markup.rows:
-                        for btn in row.buttons:
-                            if "Снять деньги" in btn.text or (hasattr(btn, 'data') and btn.data.decode().startswith('farm_claim')):
-                                await smart_click(client, msg, btn)
-        except: pass
-        await asyncio.sleep(600)
-
-# --- ЗАПУСК ---
-async def run_account(session_str, acc_id):
-    device = DEVICES[acc_id-1]
-    client = TelegramClient(StringSession(session_str), API_ID, API_HASH,
-                            device_model=device["model"], system_version=device["sys"])
-
-    @client.on(events.NewMessage(pattern=r'^\.ping', outgoing=True))
-    async def ping(event): await event.edit("🚀 **Работаю!**")
-
-    @client.on(events.NewMessage(pattern=r'^\.farm_now', outgoing=True))
-    async def farm_now(event):
-        await event.edit("🚜 Сбор...")
-        await client.send_message("@phonegetcardsbot", "/tfarm")
-        await asyncio.sleep(5)
-        async for msg in client.iter_messages("@phonegetcardsbot", limit=1):
-            if msg.reply_markup:
-                for row in msg.reply_markup.rows:
-                    for btn in row.buttons:
-                        if "Снять деньги" in btn.text or (hasattr(btn, 'data') and btn.data.decode().startswith('farm_claim')):
-                            ans = await smart_click(client, msg, btn)
-                            await event.edit(f"🔔 **Бот:** {ans}"); return
-        await event.edit("❌ Кнопка не найдена.")
-
-    # ОБНОВЛЕННЫЙ ТРЕЙД
-    @client.on(events.NewMessage(pattern=r'^\.trade @?(\w+)', outgoing=True))
-    async def trade_cmd(event):
-        target = event.pattern_match.group(1)
-        await event.delete()
-        bot = "@phonegetcardsbot"
-        await client.send_message(bot, f"/trade @{target}")
-        
-        # Список шагов: текст кнопки ИЛИ начало callback_data
-        steps = [
-            ("Добавить телефон", "trade_add_phone_start"),
-            ("Рабочий телефон", "trd_wrk_start"),
-            ("Ширпотреб", "trade_add_rarity"),
-            ("10", "trade_add_amount"), # На всякий случай добавил и сюда код
-            ("Подтвердить", "trade_confirm")
-        ]
-        
-        for text_tag, data_tag in steps:
-            await asyncio.sleep(6)
-            async for msg in client.iter_messages(bot, limit=1):
-                if msg.reply_markup:
-                    found = False
-                    for row in msg.reply_markup.rows:
-                        for btn in row.buttons:
-                            c_data = btn.data.decode() if btn.data else ""
-                            # Ищем совпадение либо по тексту, либо по началу кода
-                            if text_tag in btn.text or c_data.startswith(data_tag):
-                                await msg.click(btn)
-                                found = True; break
-                        if found: break
-
-    async with client:
-        me = await client.get_me()
-        print(f"✅ Акк {acc_id} (@{me.username}) онлайн!", flush=True)
-        asyncio.create_task(card_task(client, acc_id))
-        asyncio.create_task(daily_farm_task(client, acc_id))
-        await client.run_until_disconnected()
-
 async def main():
-    await asyncio.gather(*[run_account(SESSIONS[i], i+1) for i in range(len(SESSIONS))])
+    for i, client in enumerate(clients):
+        await client.start()
+        asyncio.create_task(bg_tasks(client, i + 1))
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
+                        
