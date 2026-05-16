@@ -47,7 +47,6 @@ async def smart_click(client, chat_id, message_id, variants, pick_first=False):
 async def sender_confirm_logic(client, acc_id):
     print(f"⏳ [Акк {acc_id} - Отправитель] Ожидаю, пока получатель соберёт трейд...", flush=True)
     
-    # 1 ЭТАП: Ждем кнопку "Готов"
     got_ready = False
     for attempt in range(15):
         await asyncio.sleep(2.5)
@@ -67,7 +66,6 @@ async def sender_confirm_logic(client, acc_id):
         print(f"⚠️ [Акк {acc_id} - Отправитель] Не дождался кнопки 'Готов'", flush=True)
         return
 
-    # 2 ЭТАП: Ждем новое сообщение от бота с кнопкой "Подтвердить"
     print(f"⏳ [Акк {acc_id} - Отправитель] Ожидаю финальное сообщение обмена...", flush=True)
     for attempt in range(10):
         await asyncio.sleep(2.5)
@@ -85,14 +83,13 @@ async def sender_confirm_logic(client, acc_id):
 async def receiver_trade_logic(client, acc_id):
     print(f"📦 [Акк {acc_id} - Получатель] Начинаю пошаговый сбор телефона...", flush=True)
     
-    # Точная последовательность по твоей инструкции
     steps = [
         {"n": "Добавить телефон", "v": ["trade_add_phone_start", "добавить телефон"]},
         {"n": "Выбор состояния", "v": [], "pick": True},       
         {"n": "Выбор редкости", "v": [], "pick": True},   
         {"n": "Выбор модели", "v": [], "pick": True},     
         {"n": "Добавить 1 шт.", "v": ["trade_add_single", "добавить 1 шт."]},
-        {"n": "Нажатие кнопки Готов", "v": ["готов", "trade_ready"]}  # Сюда нас выкидывает после добавления шт.
+        {"n": "Нажатие кнопки Готов", "v": ["готов", "trade_ready"]}  
     ]
 
     last_fingerprint = ""
@@ -122,7 +119,6 @@ async def receiver_trade_logic(client, acc_id):
             if step_passed:
                 break
 
-    # 2 ЭТАП ДЛЯ ПОЛУЧАТЕЛЯ: Ждем новое сообщение от бота для финального «Подтвердить»
     print(f"⏳ [Акк {acc_id} - Получатель] Ожидаю финальное сообщение для подтверждения...", flush=True)
     for attempt in range(12):
         await asyncio.sleep(2.5)
@@ -173,9 +169,14 @@ async def handle_bot_messages(client, message):
                 print(f"✅ [Акк {acc_id}] Трейд принят! Перехожу к наполнению предметами...", flush=True)
                 asyncio.create_task(receiver_trade_logic(client, acc_id))
 
-# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД (.ping, .farmn, .t, .т) ---
+# --- ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
 async def handle_my_messages(client, message):
     if not message.text: return
+    
+    # Железная замена filters.me: проверяем, что сообщение отправлено именно хозяином этой сессии
+    if not message.from_user or message.from_user.id != getattr(client, "me_id", 0):
+        return
+        
     text = message.text.lower().strip()
     
     if text.startswith(".ping"):
@@ -216,7 +217,7 @@ async def handle_my_messages(client, message):
 
 # --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
 async def bg_tasks(client, acc_id):
-    print(f"🟢 [Акк {acc_id}] Фоновые задачи запущены! Отправляю первую карточку...", flush=True)
+    print(f"🟢 [Акк {acc_id}] Фоновые задачи запущены!", flush=True)
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
 
@@ -252,7 +253,8 @@ async def start_bot():
             in_memory=True
         )
         
-        c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
+        # Убрали фильтр filters.me, теперь входящие сообщения отсекаются внутри handle_my_messages безопасным способом
+        c.add_handler(handlers.MessageHandler(handle_my_messages))
         c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat) & ~filters.me))
         raw_clients.append((i+1, c))
 
@@ -260,10 +262,13 @@ async def start_bot():
         try:
             await c.start()
             clients.append(c)
+            
             me = await c.get_me()
+            c.me_id = me.id # Сохраняем ID для внутренней проверки команд
+            
             if me.username:
                 my_usernames.add(me.username.lower())
-            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username})", flush=True)
+            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | ID: {me.id})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
         except Exception as e:
             print(f"⚠️ [Ошибка] Аккаунт {acc_num} НЕ запущен! Причина: {e}", flush=True)
