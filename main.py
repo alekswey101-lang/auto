@@ -112,41 +112,43 @@ async def manual_farm_logic(client, acc_id):
 
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
 async def handle_bot_messages(client, message):
-    # 1. Проверяем, что сообщение пришло именно от нужного бота (без учета регистра)
+    # Фильтр чата бота
     if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
         return
 
-    # 2. Игнорируем сообщения, которые отправили мы сами
+    # Пропускаем свои сообщения
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
         
-    if not message.text: return
-    text = message.text.lower()
+    # Собираем абсолютно весь текст, какой только может быть в сообщении бота
+    full_text = ""
+    if message.text: full_text += message.text.lower()
+    if message.caption: full_text += message.caption.lower()
     
-    # 3. МАКСИМАЛЬНОШИРОКИЙ ТРИГГЕР: Ловим любое упоминание обмена с кнопками
-    if "обмен" in text or "предложение" in text or "trade" in text:
-        try: acc_id = clients.index(client) + 1
-        except: acc_id = "Х"
-            
-        # Если в сообщении есть инлайн-кнопки
-        if message.reply_markup:
-            for row in message.reply_markup.inline_keyboard:
-                for btn in row:
-                    text_btn = btn.text.lower()
-                    data_btn = (btn.callback_data or "").lower()
-                    
-                    # Ищем кнопку принятия трейда
-                    if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
-                        print(f"🤝 [Акк {acc_id}] Вижу кнопку принятия обмена! Нажимаю...", flush=True)
-                        await asyncio.sleep(1.5) # Небольшая пауза для имитации человека
+    try: acc_id = clients.index(client) + 1
+    except: acc_id = "Х"
+        
+    # Проверяем инлайн-кнопки
+    if message.reply_markup:
+        for row in message.reply_markup.inline_keyboard:
+            for btn in row:
+                text_btn = btn.text.lower()
+                data_btn = (btn.callback_data or "").lower()
+                
+                # ЖЕЛЕЗНЫЙ ТРИГГЕР: Если бот прислал сообщение с кнопкой принять/trade_accept,
+                # и в тексте сообщения ИЛИ на самих кнопках есть упоминание обмена/трейда — КЛИКАЕМ!
+                if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
+                    if "обмен" in full_text or "предложение" in full_text or "trade" in full_text or "accept" in data_btn:
+                        print(f"🤝 [Акк {acc_id}] Обнаружена кнопка трейда в сообщении бота! Нажимаю Принять...", flush=True)
+                        await asyncio.sleep(1.5) 
                         
                         try:
                             await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
-                            print(f"✅ [Акк {acc_id}] Трейд принят! Перехожу к наполнению предметами...", flush=True)
+                            print(f"✅ [Акк {acc_id}] Входящий трейд успешно принят! Запускаю пошаговый сбор предметов...", flush=True)
                             asyncio.create_task(receiver_trade_logic(client, acc_id))
                             return
                         except Exception as e:
-                            print(f"❌ Ошибка отправки клика 'Принять' на акке {acc_id}: {e}", flush=True)
+                            print(f"❌ Ошибка нажатия кнопки 'Принять' на акке {acc_id}: {e}", flush=True)
 
 # --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
 async def handle_my_messages(client, message):
@@ -201,7 +203,6 @@ async def handle_my_messages(client, message):
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
         
-        # Запускаем таймер ожидания подтверждения для отправителя
         asyncio.create_task(sender_confirm_logic(client, acc_id))
 
 # --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
