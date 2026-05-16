@@ -17,6 +17,7 @@ SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
 clients = []
+my_usernames = set()  # Список юзернеймов твоих аккаунтов для авто-принятия
 
 # --- ФУНКЦИЯ КЛИКА ---
 async def smart_click(client, chat_id, message_id, variants, pick_first=False):
@@ -37,7 +38,7 @@ async def smart_click(client, chat_id, message_id, variants, pick_first=False):
         print(f"❌ Ошибка клика: {e}", flush=True)
     return False, None
 
-# --- ЛОГИКА ТРЕЙДА ---
+# --- ЛОГИКА ТРЕЙДА (ОТПРАВКА) ---
 async def trade_logic(client, target_user, acc_id):
     print(f"🔄 [Акк {acc_id}] Начинаю трейд на {target_user}...", flush=True)
     try:
@@ -77,12 +78,40 @@ async def manual_farm_logic(client, acc_id):
     except Exception as e:
         print(f"❌ Ошибка ручного сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ОБРАБОТЧИК СООБЩЕНИЙ ---
-async def handle_messages(client, message):
+# --- ОБРАБОТЧИК СООБЩЕНИЙ ОТ ИГРОВОГО БОТА (ДЛЯ АВТО-ПРИНЯТИЯ) ---
+async def handle_bot_messages(client, message):
+    if not message.text: return
+    text = message.text.lower()
+    
+    # Проверяем, что это сообщение об обмене
+    if "вам пришло предложение обмена от" in text:
+        # Извлекаем юзернейм отправителя из текста сообщения
+        try:
+            sender_username = text.split("от @")[1].split()[0].strip().replace(",", "").replace(".", "")
+        except:
+            sender_username = ""
+
+        # Если трейд пришел от одного из НАШИХ аккаунтов — принимаем автоматически!
+        if sender_username in my_usernames:
+            try:
+                acc_id = clients.index(client) + 1
+            except:
+                acc_id = "Х"
+                
+            print(f"🤝 [Акк {acc_id}] Обнаружен свой трейд от @{sender_username}! Принимаю...", flush=True)
+            await asyncio.sleep(2) # Маленькая пауза для реалистичности
+            
+            # Нажимаем кнопку "Принять" (также чекаем callback trade_accept)
+            res, txt = await smart_click(client, bot_chat, message.id, ["Принять", "trade_accept"])
+            if res:
+                print(f"✅ [Акк {acc_id}] Трейд успешно принят автоматически!", flush=True)
+
+# --- ОБРАБОТЧИК ТВОИХ КОМАНД (.ping, .farmn, .t, .т) ---
+async def handle_my_messages(client, message):
     if not message.text: return
     text = message.text.lower().strip()
     
-    # --- КУСОК КОМАНДЫ ПИНГ ---
+    # --- КОМАНДА ПИНГ ---
     if text.startswith(".ping"):
         try:
             await message.edit("🚀 **Pyrofork юзербот полностью активен!**")
@@ -91,13 +120,12 @@ async def handle_messages(client, message):
             print(f"❌ Ошибка изменения сообщения: {e}", flush=True)
         return
 
-    # --- КУСОК КОМАНДЫ СБОРА С ФЕРМЫ (.farmn) ---
+    # --- КОМАНДА СБОРА С ФЕРМЫ (.farmn) ---
     if text.startswith(".farmn"):
         try:
-            await message.delete() # Удаляем пусковой триггер
+            await message.delete()
         except: pass
         
-        # Запускаем сбор денег параллельно на ВСЕХ запущенных аккаунтах
         for i, cl in enumerate(clients):
             asyncio.create_task(manual_farm_logic(cl, i + 1))
         return
@@ -107,7 +135,7 @@ async def handle_messages(client, message):
         target = None
         parts = message.text.split()
         
-        # Вариант 1: Трейд через Reply (ответ на сообщение)
+        # Вариант 1: Через Reply (ответ на сообщение)
         if message.reply_to_message:
             reply_user = message.reply_to_message.from_user
             if reply_user and reply_user.username:
@@ -116,11 +144,10 @@ async def handle_messages(client, message):
                 print("⚠️ Не удается запустить трейд через реплей: у пользователя нет @username", flush=True)
                 return
 
-        # Вариант 2: Трейд по вписанному юзернейму (например, .t @asd123)
+        # Вариант 2: По вписанному юзернейму (например, .t @asd123)
         elif len(parts) >= 2:
             target = parts[1].replace("@", "")
 
-        # Если цель определена — запускаем
         if target:
             try:
                 await message.delete() 
@@ -133,7 +160,7 @@ async def handle_messages(client, message):
                 
             asyncio.create_task(trade_logic(client, target, acc_id))
 
-# --- ФОНОВЫЕ ЗАДАЧИ ---
+# --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
 async def bg_tasks(client, acc_id):
     print(f"🟢 [Акк {acc_id}] Фоновые задачи запущены! Отправляю первую карточку...", flush=True)
     try:
@@ -160,7 +187,7 @@ async def bg_tasks(client, acc_id):
 
 # --- ЗАПУСК ВСЕХ КЛИЕНТОВ ---
 async def start_bot():
-    global clients
+    global clients, my_usernames
     print("🛠 Инициализация Pyrofork клиентов...", flush=True)
     
     raw_clients = []
@@ -168,26 +195,41 @@ async def start_bot():
         if not session or session.strip() == "": 
             continue
         
+        clean_session = session.strip()
+        
         c = Client(
             name=f"memory_session_{i+1}",
             api_id=API_ID,
             api_hash=API_HASH,
-            session_string=session.strip(),
+            session_string=clean_session,
             in_memory=True
         )
-        c.add_handler(handlers.MessageHandler(handle_messages, filters.me))
+        
+        # Хэндлер на твои личные команды
+        c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
+        # Хэндлер на сообщения от игрового бота (для авто-принятия трейдов)
+        c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat) & ~filters.me))
+        
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
         try:
             await c.start()
             clients.append(c)
-            print(f"✅ Аккаунт {acc_num} успешно авторизован!", flush=True)
+            
+            # Получаем и запоминаем юзернейм аккаунта
+            me = await c.get_me()
+            if me.username:
+                my_usernames.add(me.username.lower())
+                
+            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
         except Exception as e:
-            print(f"⚠️ [Ошибка] Аккаунт {acc_num} НЕ запущен! Причина: {e}", flush=True)
+            print(f"⚠️ [Ошибка] Аккаунт {acc_num} НЕ запущен!", flush=True)
+            print(f"❌ Причина: {e}", flush=True)
 
-    print(f"💎 Запуск завершен. Работает аккаунтов: {len(clients)} из {len(raw_clients)}", flush=True)
+    print(f"💎 Запуск завершен. Наших аккаунтов в базе для авто-принятия: {my_usernames}", flush=True)
+    print(f"💎 Всего работает аккаунтов: {len(clients)} из {len(raw_clients)}", flush=True)
     
     while True:
         await asyncio.sleep(3600)
