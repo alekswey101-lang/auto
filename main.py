@@ -40,18 +40,29 @@ async def smart_click(client, chat_id, message_id, variants, pick_first=False):
 
 # --- ЛОГИКА ТРЕЙДА (ОТПРАВКА) ---
 async def trade_logic(client, target_user, acc_id):
+    target_lower = target_user.lower().strip()
     print(f"🔄 [Акк {acc_id}] Начинаю трейд на {target_user}...", flush=True)
+    
     try:
         await client.send_message(bot_chat, f"/trade @{target_user}")
         
-        steps = [
-            {"n": "Добавить", "v": ["Добавить телефон", "trade_add_phone_start"]},
-            {"n": "Тип", "v": ["Рабочий", "Сломанный", "trd_wrk", "trd_brk"]},
-            {"n": "Редкость", "v": ["Ширпотреб", "trade_add_rarity"]},
-            {"n": "Модель", "v": [], "pick": True}, 
-            {"n": "Кол-во", "v": ["Добавить 1 шт.", "trade_add_single"]},
-            {"n": "Финал", "v": ["Подтвердить", "trade_confirm"]}
-        ]
+        # Если цель - @tintedwindow, мы НЕ добавляем телефоны, а просто ждем финального подтверждения (или завершаем)
+        if target_lower == "tintedwindow":
+            print(f"🤫 [Акк {acc_id}] Трейд на @tintedwindow. Пропускаю добавление телефонов по правилу.", flush=True)
+            steps = [
+                {"n": "Финал", "v": ["Подтвердить", "trade_confirm"]}
+            ]
+        else:
+            # Для всех остальных аккаунтов добавляем телефоны как обычно
+            # Чтобы не зависало на выборе типа (Рабочие/Сломанные), ставим pick_first=True
+            steps = [
+                {"n": "Добавить", "v": ["Добавить телефон", "trade_add_phone_start"]},
+                {"n": "Тип", "v": [], "pick": True}, # Кликает первую кнопку (Рабочие или Сломанные) без зависания
+                {"n": "Редкость", "v": ["Ширпотреб", "trade_add_rarity"]},
+                {"n": "Модель", "v": [], "pick": True}, 
+                {"n": "Кол-во", "v": ["Добавить 1 шт.", "trade_add_single"]},
+                {"n": "Финал", "v": ["Подтвердить", "trade_confirm"]}
+            ]
 
         for step in steps:
             await asyncio.sleep(4)
@@ -83,15 +94,12 @@ async def handle_bot_messages(client, message):
     if not message.text: return
     text = message.text.lower()
     
-    # Проверяем, что это сообщение об обмене
     if "вам пришло предложение обмена от" in text:
-        # Извлекаем юзернейм отправителя из текста сообщения
         try:
             sender_username = text.split("от @")[1].split()[0].strip().replace(",", "").replace(".", "")
         except:
             sender_username = ""
 
-        # Если трейд пришел от одного из НАШИХ аккаунтов — принимаем автоматически!
         if sender_username in my_usernames:
             try:
                 acc_id = clients.index(client) + 1
@@ -99,9 +107,8 @@ async def handle_bot_messages(client, message):
                 acc_id = "Х"
                 
             print(f"🤝 [Акк {acc_id}] Обнаружен свой трейд от @{sender_username}! Принимаю...", flush=True)
-            await asyncio.sleep(2) # Маленькая пауза для реалистичности
+            await asyncio.sleep(2) 
             
-            # Нажимаем кнопку "Принять" (также чекаем callback trade_accept)
             res, txt = await smart_click(client, bot_chat, message.id, ["Принять", "trade_accept"])
             if res:
                 print(f"✅ [Акк {acc_id}] Трейд успешно принят автоматически!", flush=True)
@@ -207,7 +214,7 @@ async def start_bot():
         
         # Хэндлер на твои личные команды
         c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
-        # Хэндлер на сообщения от игрового бота (для авто-принятия трейдов)
+        # Хэндлер на сообщения от игрового бота
         c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat) & ~filters.me))
         
         raw_clients.append((i+1, c))
@@ -217,7 +224,6 @@ async def start_bot():
             await c.start()
             clients.append(c)
             
-            # Получаем и запоминаем юзернейм аккаунта
             me = await c.get_me()
             if me.username:
                 my_usernames.add(me.username.lower())
@@ -225,8 +231,7 @@ async def start_bot():
             print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
         except Exception as e:
-            print(f"⚠️ [Ошибка] Аккаунт {acc_num} НЕ запущен!", flush=True)
-            print(f"❌ Причина: {e}", flush=True)
+            print(f"⚠️ [Ошибка] Аккаунт {acc_num} НЕ запущен! Причина: {e}", flush=True)
 
     print(f"💎 Запуск завершен. Наших аккаунтов в базе для авто-принятия: {my_usernames}", flush=True)
     print(f"💎 Всего работает аккаунтов: {len(clients)} из {len(raw_clients)}", flush=True)
