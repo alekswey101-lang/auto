@@ -146,8 +146,12 @@ async def manual_farm_logic(client, acc_id):
     except Exception as e:
         print(f"❌ Ошибка ручного сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ОБРАБОТЧИК ВХОДЯЩИХ СООБЩЕНИЙ ОТ ИГРОВОГО БОТА ---
+# --- ИСПРАВЛЕННЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ОТ БОТА ---
 async def handle_bot_messages(client, message):
+    # Если сообщение отправлено НАМИ ЖЕ (наш текст бота), игнорируем его железно по ID
+    if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
+        return
+
     if not message.text: return
     text = message.text.lower()
     
@@ -166,14 +170,12 @@ async def handle_bot_messages(client, message):
             
             res, txt = await smart_click(client, bot_chat, message.id, ["trade_accept", "принять"])
             if res:
-                print(f"✅ [Акк {acc_id}] Трейд принят! Перехожу к наполнению предметами...", flush=True)
+                print(f"✅ [Acc {acc_id}] Трейд принят! Перехожу к наполнению предметами...", flush=True)
                 asyncio.create_task(receiver_trade_logic(client, acc_id))
 
-# --- ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
+# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
 async def handle_my_messages(client, message):
     if not message.text: return
-    
-    # Железная замена filters.me: проверяем, что сообщение отправлено именно хозяином этой сессии
     if not message.from_user or message.from_user.id != getattr(client, "me_id", 0):
         return
         
@@ -253,9 +255,9 @@ async def start_bot():
             in_memory=True
         )
         
-        # Убрали фильтр filters.me, теперь входящие сообщения отсекаются внутри handle_my_messages безопасным способом
+        # Полностью чистые хэндлеры без капризных фильтров библиотеки Pyrogram
         c.add_handler(handlers.MessageHandler(handle_my_messages))
-        c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat) & ~filters.me))
+        c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat)))
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
@@ -264,7 +266,7 @@ async def start_bot():
             clients.append(c)
             
             me = await c.get_me()
-            c.me_id = me.id # Сохраняем ID для внутренней проверки команд
+            c.me_id = me.id 
             
             if me.username:
                 my_usernames.add(me.username.lower())
@@ -278,4 +280,4 @@ async def start_bot():
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_bot())
+    loop.run_until
