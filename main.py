@@ -38,8 +38,9 @@ MSK = timezone(timedelta(hours=3))
 clients = []
 account_states = {}
 
-# Глобальная очередь для поочередной отправки трейдов
+# Глобальная очередь и флаг занятости для поочередных трейдов
 trade_queue = asyncio.Queue()
+queue_lock = asyncio.Lock()
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def parse_time(text):
@@ -82,25 +83,26 @@ async def click(msg, name):
                     return False
     return False
 
-# --- ВОРКЕР ОЧЕРЕДИ ТРЕЙДОВ (ИНТЕРВАЛ 2 МИНУТЫ) ---
+# --- БЕЗОПАСНЫЙ ВОРКЕР ОЧЕРЕДИ С БЛОКИРОВКОЙ ---
 async def trade_queue_worker():
     while True:
-        # Ждем, пока кто-то появится в очереди
         client, acc_id, count = await trade_queue.get()
-        print(f"⏳ [Очередь] Наступил черед Аккаунта {acc_id}. Отправляю трейд основы...", flush=True)
         
-        try:
-            await client.send_message(TRADE_BOT, f"/trade {MAIN_ACC_ID}")
-            print(f"🚀 [Акк {acc_id}] Успешно кинул трейд основе! Ждем 2 минуты перед следующим...", flush=True)
-        except Exception as e:
-            print(f"❌ [Акк {acc_id}] Ошибка вызова трейда: {e}", flush=True)
-            
-        # Железная пауза в 2 минуты (120 секунд) между трейдами разных аккаунтов
-        await asyncio.sleep(120)
+        # Захватываем лок, чтобы никто другой не мог отправить команду параллельно
+        async with queue_lock:
+            print(f"⏳ [Очередь] Наступил черед Аккаунта {acc_id}. Отправляю трейд...", flush=True)
+            try:
+                await client.send_message(TRADE_BOT, f"/trade {MAIN_ACC_ID}")
+                print(f"🚀 [Акк {acc_id}] Трейд отправлен основе! Начинаю паузу 2 минуты...", flush=True)
+                # Ждем строго 2 минуты БУФЕРА перед тем, как отпустить лок для следующего аккаунта
+                await asyncio.sleep(120)
+            except Exception as e:
+                print(f"❌ [Акк {acc_id}] Ошибка вызова трейда: {e}", flush=True)
+                await asyncio.sleep(5) # Короткая пауза при ошибке
+                
         trade_queue.task_done()
 
-# --- ФОНОВЫЕ ЦИКЛЫ ДЛЯ КАЖДОГО АККАУНТА ---
-
+# --- ФОНОВЫЕ ЦИКЛЫ ---
 async def timer_loop(acc_id):
     st = account_states[acc_id]
     while True:
@@ -114,7 +116,7 @@ async def tcard_loop(client, acc_id):
     st = account_states[acc_id]
     while True:
         if st["running"] and "tcard" not in st["timers"]:
-            st["timers"]["tcard"] = 7200  # КД 2 часа
+            st["timers"]["tcard"] = 7200
             try: 
                 print(f"🃏 [Акк {acc_id}] Отправляю команду 'ткарточка'", flush=True)
                 await client.send_message(TRADE_BOT, "ткарточка")
@@ -155,8 +157,8 @@ async def daily_loop(client, acc_id):
             done = False
         await asyncio.sleep(30)
 
-# --- ОБРАБОТЧИК СООБЩЕНИЙ ОТ БОТОВ ---
-async def handle_messages(client, msg):
+# --- ОБЩАЯ ЛОГИКА ОБРАБОТКИ СООБЩЕНИЙ (И ДЛЯ НОВЫХ, И ДЛЯ ИЗМЕНЕННЫХ) ---
+async def process_message_logic(client, msg):
     if msg.from_user and msg.from_user.id == getattr(client, "me_id", 0):
         return
 
@@ -166,7 +168,7 @@ async def handle_messages(client, msg):
     st = account_states[acc_id]
     text = (msg.text or msg.caption or "").lower()
     
-    # 1. Проверка коллекции через "такк"
+    # 1. Проверка количества телефонов
     if msg.photo and text and "телефонов в коллекции:" in text:
         match = re.search(r"телефонов в коллекции:\s*(\d+)", text)
         if match:
@@ -176,7 +178,7 @@ async def handle_messages(client, msg):
                 print(f"📥 [Акк {acc_id}] Инвентарь забит ({count} шт)! Встаю в очередь на обмен...", flush=True)
                 await trade_queue.put((client, acc_id, count))
 
-    # 2. Обработка кулдауна ткарточки
+    # 2. Кулдаун ткарточки
     if "вам выпал" in text or "карта" in text:
         st["timers"]["tcard"] = 7200
     elif "через" in text and hasattr(msg, "reply_to_message") and msg.reply_to_message:
@@ -184,7 +186,7 @@ async def handle_messages(client, msg):
             sec = parse_time(text)
             st["timers"]["tcard"] = sec if sec > 0 else 300
 
-    # 3. Авто-скупка контейнеров
+    # 3. Контейнеры
     if "раскуплены" in text and "контейнер" in text:
         sec = parse_time(text)
         st["timers"]["containers"] = sec if sec > 0 else 600
@@ -201,7 +203,7 @@ async def handle_messages(client, msg):
             st["locks"]["containers"] = False
             st["timers"]["containers"] = 15
 
-    # 4. БРОНЕБОЙНОЕ АВТО-ПРИНЯТИЕ ТРЕЙДА И КОНТРОЛЬ СЛОТОВ
+    # 4. Трейды (триггерятся и при изменении сообщения ботом!)
     if "предложение обмена" in text or "вам пришло предложение" in text:
         print(f"📩 [Акк {acc_id}] Обнаружен входящий трейд! Пробую принять...", flush=True)
         await delay(1.0, 2.0)
@@ -211,43 +213,34 @@ async def handle_messages(client, msg):
                 return
         return
             
-    # Нажимает "ГОТОВ" только когда слоты забиты на 10/10
+    # Жмет ГОТОВ если слоты забились до 10/10 или основа уже готова
     elif "занято слотов: 10/10" in text or ("готовность: ❌" in text and "✅" in text):
-        print(f"⚡ [Акк {acc_id}] Условия для готовности выполнены (Слоты 10/10). Нажимаю ГОТОВ...", flush=True)
-        await delay(1.0, 2.0)
+        print(f"⚡ [Акк {acc_id}] Условия выполнены (Слоты 10/10 или основа готова). Нажимаю ГОТОВ...", flush=True)
+        await delay(1.0, 2.5)
         if await click(msg, "готов"):
-            print(f"👍 [Акк {acc_id}] Нажал кнопку ГОТОВ!", flush=True)
+            print(f"👍 [Акк {acc_id}] Успешно нажал кнопку ГОТОВ!", flush=True)
         
     elif "подтвердите обмен" in text or "подтвердите" in text:
         await delay(1.0, 2.0)
-        for confirm_variant in ["подтвердить", "подтверждаю"]:
+        for confirm_variant in ["подтвердить", "подтвержаю"]:
             if await click(msg, confirm_variant):
                 print(f"🎉 [Акк {acc_id}] Трейд полностью ПОДТВЕРЖДЕН!", flush=True)
                 return
 
-# --- КОНСОЛЬ УПРАВЛЕНИЯ ФЕРМОЙ ---
-async def console():
-    while True:
-        try:
-            cmd = await asyncio.to_thread(sys.stdin.readline)
-            cmd = cmd.strip().lower()
-            if cmd == "stop":
-                for acc_id in account_states:
-                    account_states[acc_id]["running"] = False
-                print("⏸ Вся ферма поставлена на паузу.", flush=True)
-            elif cmd == "start":
-                for acc_id in account_states:
-                    account_states[acc_id]["running"] = True
-                print("▶️ Вся ферма успешно запущена!", flush=True)
-        except:
-            await asyncio.sleep(5)
+# Перенаправляем новые сообщения в общую логику
+async def handle_new_messages(client, msg):
+    await process_message_logic(client, msg)
+
+# Перенаправляем отредактированные сообщения в общую логику
+async def handle_edited_messages(client, msg):
+    await process_message_logic(client, msg)
 
 # --- ГЛАВНЫЙ ЗАПУСК СИСТЕМЫ ---
 async def main():
     global clients
-    print("🛠 Запуск продвинутой фермы (Поочередные трейды + Слоты 10/10)...", flush=True)
+    print("🛠 Запуск обновленной фермы (Старт-чек инвентаря + Фикс кнопок)...", flush=True)
     
-    # Запускаем фоновый воркер для контроля очереди трейдов
+    # Запускаем независимый воркер очереди
     asyncio.create_task(trade_queue_worker())
     
     raw_clients = []
@@ -263,15 +256,23 @@ async def main():
             in_memory=True
         )
         
+        # Перехват новых сообщений
         c.add_handler(handlers.MessageHandler(
-            handle_messages, 
+            handle_new_messages, 
             filters.chat([TRADE_BOT, ROULETTE_BOT])
         ))
+        
+        # Перехват обновлений (редактирования) сообщений
+        c.add_handler(handlers.EditedMessageHandler(
+            handle_edited_messages,
+            filters.chat([TRADE_BOT, ROULETTE_BOT])
+        ))
+        
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
         try:
-            await asyncio.sleep(3.0)
+            await asyncio.sleep(3.0) # Защита от FloodWait при старте сессий
             await c.start()
             clients.append(c)
             
@@ -287,6 +288,15 @@ async def main():
             
             print(f"✅ Аккаунт {acc_num} успешно запущен: @{me.username or 'NoUsername'}", flush=True)
             
+            # --- ПРИНУДИТЕЛЬНЫЙ СТАРТ-ЧЕК ИНВЕНТАРЯ ---
+            try:
+                print(f"⚡ [Акк {acc_num}] Проверка инвентаря на старте...", flush=True)
+                await c.send_message(TRADE_BOT, "такк")
+                await asyncio.sleep(2.0)
+            except:
+                pass
+            
+            # Включаем параллельные фоновые циклы задач
             asyncio.create_task(timer_loop(acc_num))
             asyncio.create_task(tcard_loop(c, acc_num))
             asyncio.create_task(container_loop(c, acc_num))
@@ -295,11 +305,10 @@ async def main():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {acc_num}: {e}", flush=True)
 
-    print("💎 Все доступные аккаунты фермы инициализированы!", flush=True)
-    asyncio.create_task(console())
+    print("💎 Все доступные аккаунты фермы инициализированы и проверены!", flush=True)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
-                        
+    
