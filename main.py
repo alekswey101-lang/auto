@@ -17,7 +17,7 @@ SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
 clients = []
-my_usernames = set()  # Список юзернеймов твоих аккаунтов для авто-принятия
+my_usernames = set()  # Список юзернеймов твоих аккаунтов фермы
 
 # --- ФУНКЦИЯ КЛИКА ---
 async def smart_click(client, chat_id, message_id, variants, pick_first=False):
@@ -38,44 +38,47 @@ async def smart_click(client, chat_id, message_id, variants, pick_first=False):
         print(f"❌ Ошибка клика: {e}", flush=True)
     return False, None
 
-# --- ЛОГИКА ТРЕЙДА (ОТПРАВКА) ---
-async def trade_logic(client, target_user, acc_id):
-    target_lower = target_user.lower().strip()
-    print(f"🔄 [Акк {acc_id}] Начинаю трейд на {target_user}...", flush=True)
-    
+# --- ЛОГИКА ДЛЯ ОТПРАВИТЕЛЯ (ТОЛЬКО ПОДТВЕРЖДЕНИЕ В КОНЦЕ) ---
+async def sender_confirm_logic(client, acc_id):
+    # Ждем 25 секунд, пока принимающий аккаунт спокойно добавляет свои телефоны
+    await asyncio.sleep(25)
+    print(f"✍️ [Акк {acc_id} - Отправитель] Время вышло. Подтверждаю трейд со своей стороны...", flush=True)
     try:
-        await client.send_message(bot_chat, f"/trade @{target_user}")
-        
-        # Если цель - @tintedwindow, мы НЕ добавляем телефоны, а просто ждем финального подтверждения (или завершаем)
-        if target_lower == "tintedwindow":
-            print(f"🤫 [Акк {acc_id}] Трейд на @tintedwindow. Пропускаю добавление телефонов по правилу.", flush=True)
-            steps = [
-                {"n": "Финал", "v": ["Подтвердить", "trade_confirm"]}
-            ]
-        else:
-            # Для всех остальных аккаунтов добавляем телефоны как обычно
-            # Чтобы не зависало на выборе типа (Рабочие/Сломанные), ставим pick_first=True
-            steps = [
-                {"n": "Добавить", "v": ["Добавить телефон", "trade_add_phone_start"]},
-                {"n": "Тип", "v": [], "pick": True}, # Кликает первую кнопку (Рабочие или Сломанные) без зависания
-                {"n": "Редкость", "v": ["Ширпотреб", "trade_add_rarity"]},
-                {"n": "Модель", "v": [], "pick": True}, 
-                {"n": "Кол-во", "v": ["Добавить 1 шт.", "trade_add_single"]},
-                {"n": "Финал", "v": ["Подтвердить", "trade_confirm"]}
-            ]
+        async for msg in client.get_chat_history(bot_chat, limit=1):
+            if msg.reply_markup:
+                res, txt = await smart_click(client, bot_chat, msg.id, ["Подтвердить", "trade_confirm"])
+                if res:
+                    print(f"✅ [Акк {acc_id} - Отправитель] Успешно подтвердил чистый трейд!", flush=True)
+    except Exception as e:
+        print(f"❌ Ошибка подтверждения на стороне отправителя {acc_id}: {e}", flush=True)
 
-        for step in steps:
-            await asyncio.sleep(4)
+# --- ЛОГИКА ДЛЯ ПОЛУЧАТЕЛЯ (ПОЛНЫЙ СБОР И НАПОЛНЕНИЕ ТРЕЙДА) ---
+async def receiver_trade_logic(client, acc_id):
+    print(f"📦 [Акк {acc_id} - Получатель] Начинаю процесс добавления телефонов в обмен...", flush=True)
+    
+    # Сверхнадежные шаги: тип, редкость и модель кликаются по первой кнопке без привязки к тексту
+    steps = [
+        {"n": "Добавить", "v": ["Добавить телефон", "trade_add_phone_start"]},
+        {"n": "Тип", "v": [], "pick": True},       # Кликает первую кнопку состояния (Рабочие/Сломанные)
+        {"n": "Редкость", "v": [], "pick": True},   # Кликает первую кнопку редкости (Ширпотреб) — ТЕПЕРЬ НЕ ЗАВИСАЕТ!
+        {"n": "Модель", "v": [], "pick": True},     # Кликает первую доступную модель
+        {"n": "Кол-во", "v": ["Добавить 1 шт.", "trade_add_single"]},
+        {"n": "Финал", "v": ["Подтвердить", "trade_confirm"]}
+    ]
+
+    for step in steps:
+        await asyncio.sleep(4)
+        try:
             async for msg in client.get_chat_history(bot_chat, limit=1):
                 if msg.reply_markup:
                     res, txt = await smart_click(client, bot_chat, msg.id, step.get("v", []), step.get("pick", False))
                     if res:
-                        print(f"📦 [Акк {acc_id}] Успешный шаг [{step['n']}]: {txt}", flush=True)
+                        print(f"⚡ [Акк {acc_id} - Получатель] Шаг [{step['n']}] пройден: {txt}", flush=True)
                         break
-    except Exception as e:
-        print(f"❌ Ошибка в процессе трейда на акке {acc_id}: {e}", flush=True)
+        except Exception as e:
+            print(f"❌ Ошибка на шаге {step['n']} у получателя {acc_id}: {e}", flush=True)
 
-# --- ЛОГИКА РУЧНОГО СБОРА ФЕРМЫ ---
+# --- ЛОГИКА РУЧНОГО СБОРА С ФЕРМЫ ---
 async def manual_farm_logic(client, acc_id):
     try:
         print(f"🚜 [Акк {acc_id}] Ручной сбор фермы по команде .farmn", flush=True)
@@ -89,7 +92,7 @@ async def manual_farm_logic(client, acc_id):
     except Exception as e:
         print(f"❌ Ошибка ручного сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ОБРАБОТЧИК СООБЩЕНИЙ ОТ ИГРОВОГО БОТА (ДЛЯ АВТО-ПРИНЯТИЯ) ---
+# --- ОБРАБОТЧИК ВХОДЯЩИХ СООБЩЕНИЙ ОТ ИГРОВОГО БОТА ---
 async def handle_bot_messages(client, message):
     if not message.text: return
     text = message.text.lower()
@@ -100,20 +103,23 @@ async def handle_bot_messages(client, message):
         except:
             sender_username = ""
 
+        # Если трейд пришел от нашего же круга аккаунтов фермы
         if sender_username in my_usernames:
             try:
                 acc_id = clients.index(client) + 1
             except:
                 acc_id = "Х"
                 
-            print(f"🤝 [Акк {acc_id}] Обнаружен свой трейд от @{sender_username}! Принимаю...", flush=True)
+            print(f"🤝 [Акк {acc_id}] Принял уведомление. Трейд от своего же акка @{sender_username}! Нажимаю Принять...", flush=True)
             await asyncio.sleep(2) 
             
             res, txt = await smart_click(client, bot_chat, message.id, ["Принять", "trade_accept"])
             if res:
-                print(f"✅ [Акк {acc_id}] Трейд успешно принят автоматически!", flush=True)
+                print(f"✅ [Акк {acc_id}] Трейд принят! Перехожу к наполнению предметами...", flush=True)
+                # Передаем задачу наполнения ПОЛУЧАТЕЛЮ обмена
+                asyncio.create_task(receiver_trade_logic(client, acc_id))
 
-# --- ОБРАБОТЧИК ТВОИХ КОМАНД (.ping, .farmn, .t, .т) ---
+# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД (.ping, .farmn, .t, .т) ---
 async def handle_my_messages(client, message):
     if not message.text: return
     text = message.text.lower().strip()
@@ -122,7 +128,6 @@ async def handle_my_messages(client, message):
     if text.startswith(".ping"):
         try:
             await message.edit("🚀 **Pyrofork юзербот полностью активен!**")
-            print("🔔 Команда .ping успешно сработала", flush=True)
         except Exception as e:
             print(f"❌ Ошибка изменения сообщения: {e}", flush=True)
         return
@@ -142,16 +147,10 @@ async def handle_my_messages(client, message):
         target = None
         parts = message.text.split()
         
-        # Вариант 1: Через Reply (ответ на сообщение)
         if message.reply_to_message:
             reply_user = message.reply_to_message.from_user
             if reply_user and reply_user.username:
                 target = reply_user.username
-            else:
-                print("⚠️ Не удается запустить трейд через реплей: у пользователя нет @username", flush=True)
-                return
-
-        # Вариант 2: По вписанному юзернейму (например, .t @asd123)
         elif len(parts) >= 2:
             target = parts[1].replace("@", "")
 
@@ -165,9 +164,14 @@ async def handle_my_messages(client, message):
             except:
                 acc_id = 1
                 
-            asyncio.create_task(trade_logic(client, target, acc_id))
+            print(f"📣 [Акк {acc_id} - Отправитель] Инициирую трейд на @{target}...", flush=True)
+            await client.send_message(bot_chat, f"/trade @{target}")
+            
+            # Если цель обмена — один из наших же ботов, запускаем таймер ожидания подтверждения
+            if target.lower() in my_usernames:
+                asyncio.create_task(sender_confirm_logic(client, acc_id))
 
-# --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
+# --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ (КАРТОЧКИ РАЗ В 2 ЧАСА) ---
 async def bg_tasks(client, acc_id):
     print(f"🟢 [Акк {acc_id}] Фоновые задачи запущены! Отправляю первую карточку...", flush=True)
     try:
@@ -202,21 +206,16 @@ async def start_bot():
         if not session or session.strip() == "": 
             continue
         
-        clean_session = session.strip()
-        
         c = Client(
             name=f"memory_session_{i+1}",
             api_id=API_ID,
             api_hash=API_HASH,
-            session_string=clean_session,
+            session_string=session.strip(),
             in_memory=True
         )
         
-        # Хэндлер на твои личные команды
         c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
-        # Хэндлер на сообщения от игрового бота
         c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat) & ~filters.me))
-        
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
