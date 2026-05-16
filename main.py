@@ -63,6 +63,20 @@ async def trade_logic(client, target_user, acc_id):
     except Exception as e:
         print(f"❌ Ошибка в процессе трейда на акке {acc_id}: {e}", flush=True)
 
+# --- ЛОГИКА РУЧНОГО СБОРА ФЕРМЫ ---
+async def manual_farm_logic(client, acc_id):
+    try:
+        print(f"🚜 [Акк {acc_id}] Ручной сбор фермы по команде .farmn", flush=True)
+        await client.send_message(bot_chat, "/tfarm")
+        await asyncio.sleep(5)
+        async for msg in client.get_chat_history(bot_chat, limit=1):
+            if msg.reply_markup:
+                res, txt = await smart_click(client, bot_chat, msg.id, ["Снять деньги", "farm_claim"])
+                if res:
+                    print(f"💰 [Акк {acc_id}] Деньги с фермы успешно сняты вручную!", flush=True)
+    except Exception as e:
+        print(f"❌ Ошибка ручного сбора на акке {acc_id}: {e}", flush=True)
+
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ---
 async def handle_messages(client, message):
     if not message.text: return
@@ -77,6 +91,17 @@ async def handle_messages(client, message):
             print(f"❌ Ошибка изменения сообщения: {e}", flush=True)
         return
 
+    # --- КУСОК КОМАНДЫ СБОРА С ФЕРМЫ (.farmn) ---
+    if text.startswith(".farmn"):
+        try:
+            await message.delete() # Удаляем пусковой триггер
+        except: pass
+        
+        # Запускаем сбор денег параллельно на ВСЕХ запущенных аккаунтах
+        for i, cl in enumerate(clients):
+            asyncio.create_task(manual_farm_logic(cl, i + 1))
+        return
+
     # --- УНИВЕРСАЛЬНЫЙ ТРЕЙД (.trade, .t, .т) ---
     if text.startswith(".trade") or text.startswith(".t") or text.startswith(".т"):
         target = None
@@ -88,7 +113,6 @@ async def handle_messages(client, message):
             if reply_user and reply_user.username:
                 target = reply_user.username
             else:
-                # Если у юзера нет юзернейма, пишем ошибку в лог и выходим
                 print("⚠️ Не удается запустить трейд через реплей: у пользователя нет @username", flush=True)
                 return
 
@@ -99,9 +123,8 @@ async def handle_messages(client, message):
         # Если цель определена — запускаем
         if target:
             try:
-                await message.delete() # Удаляем наше триггер-сообщение
-            except: 
-                pass
+                await message.delete() 
+            except: pass
             
             try:
                 acc_id = clients.index(client) + 1
