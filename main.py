@@ -82,7 +82,8 @@ async def sender_confirm_logic(client, acc_id):
     await asyncio.sleep(32)
     print(f"✍️ [Акк {acc_id} - Отправитель] Время вышло. Подтверждаю обмен...", flush=True)
     try:
-        async_for msg in client.get_chat_history(bot_chat, limit=1):
+        # ИСПРАВЛЕНО: тут был async_for
+        async for msg in client.get_chat_history(bot_chat, limit=1):
             if msg.reply_markup:
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
@@ -99,7 +100,8 @@ async def manual_farm_logic(client, acc_id):
         print(f"🚜 [Акк {acc_id}] Собираю прибыль...", flush=True)
         await client.send_message(bot_chat, "/tfarm")
         await asyncio.sleep(4)
-        async_for msg in client.get_chat_history(bot_chat, limit=1):
+        # ИСПРАВЛЕНО: тут был async_for
+        async for msg in client.get_chat_history(bot_chat, limit=1):
             if msg.reply_markup:
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
@@ -112,20 +114,16 @@ async def manual_farm_logic(client, acc_id):
 
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
 async def handle_bot_messages(client, message):
-    # Железный фильтр чата: приводим к нижнему регистру во избежание PhoneGetCardsBot != phonegetcardsbot
     if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
         return
 
-    # Защита от обработки собственных сообщений
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
         
     if not message.text: return
     text = message.text.lower()
     
-    # Проверяем, что это уведомление о входящем обмене
     if "предложение обмена" in text or "пришло предложение" in text:
-        # Проверяем, есть ли упоминание любого аккаунта нашей фермы внутри текста сообщения
         is_from_farm = False
         for uname in my_usernames:
             if uname in text:
@@ -154,7 +152,7 @@ async def handle_bot_messages(client, message):
             except Exception as e:
                 print(f"❌ Не удалось нажать Принять на акке {acc_id}: {e}", flush=True)
 
-# --- ЖЕЛЕЗНЫЙ ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
+# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
 async def handle_my_messages(client, message):
     if not message.text: return
     
@@ -229,7 +227,8 @@ async def bg_tasks(client, acc_id):
                 if now.hour == 21 and now.minute <= 25:
                     await client.send_message(bot_chat, "/tfarm")
                     await asyncio.sleep(10)
-                    async_for msg in client.get_chat_history(bot_chat, limit=1):
+                    # ИСПРАВЛЕНО: тут был async_for
+                    async for msg in client.get_chat_history(bot_chat, limit=1):
                         if msg.reply_markup:
                             for row in msg.reply_markup.inline_keyboard:
                                 for btn in row:
