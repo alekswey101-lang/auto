@@ -24,16 +24,15 @@ try:
     with open("accounts.json", "r", encoding="utf-8") as f:
         accounts_data = json.load(f)
 except FileNotFoundError:
-    accounts_data = {} # Если файла нет, скрипт не упадет
+    accounts_data = {}
 
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
-
-# Собираем до 5 сессий из переменных окружения Render
 SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 TRADE_BOT = "phonegetcardsbot"
 ROULETTE_BOT = "phonegetroulettebot"
+MAIN_ACC_ID = "7476331360"  # ID твоей основы для слива телефонов
 MSK = timezone(timedelta(hours=3))
 
 clients = []
@@ -72,7 +71,6 @@ async def click(msg, name):
             btn_text = getattr(btn, "text", "")
             if btn_text and name.lower() in btn_text.lower():
                 try:
-                    # Имитируем реальное нажатие по координатам (обходим защиту бота)
                     await msg.click(row_idx, col_idx)
                     await delay(1.0, 2.0)
                     return True
@@ -95,10 +93,20 @@ async def timer_loop(acc_id):
 async def tcard_loop(client, acc_id):
     st = account_states[acc_id]
     while True:
+        # Пишет ткарточка раз в 2 часа (7200 сек), если нет кулдауна
         if st["running"] and "tcard" not in st["timers"]:
-            st["timers"]["tcard"] = 120
-            try: await client.send_message(TRADE_BOT, "ткарточка")
-            except: pass
+            st["timers"]["tcard"] = 7200  # Ставим КД 2 часа
+            try: 
+                print(f"🃏 [Акк {acc_id}] Отправляю команду 'ткарточка'", flush=True)
+                await client.send_message(TRADE_BOT, "ткарточка")
+                await delay(2.0, 4.0)
+                
+                # Сразу после ткарточки пишем "такк"
+                print(f"📊 [Акк {acc_id}] Отправляю команду 'такк' для проверки коллекции", flush=True)
+                await client.send_message(TRADE_BOT, "такк")
+            except Exception as e: 
+                print(f"⚠️ [Акк {acc_id}] Ошибка отправки ткарточки/такк: {e}", flush=True)
+                st["timers"]["tcard"] = 60  # Перепроверить через минуту в случае сбоя
         await asyncio.sleep(15)
 
 async def container_loop(client, acc_id):
@@ -131,7 +139,6 @@ async def daily_loop(client, acc_id):
 
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ОТ БОТОВ ---
 async def handle_messages(client, msg):
-    # Защита от обработки собственных сообщений юзербота
     if msg.from_user and msg.from_user.id == getattr(client, "me_id", 0):
         return
 
@@ -141,7 +148,18 @@ async def handle_messages(client, msg):
     st = account_states[acc_id]
     text = (msg.text or msg.caption or "").lower()
     
-    # Обработка таймеров ткарточки
+    # 1. Проверка коллекции через "такк" (Сканируем сообщения с фото и текстом)
+    if msg.photo and text and "телефонов в коллекции:" in text:
+        match = re.search(r"телефонов в коллекции:\s*(\d+)", text)
+        if match:
+            count = int(match.group(1))
+            print(f"📱 [Акк {acc_id}] Телефонов в коллекции: {count}", flush=True)
+            if count >= 50:
+                print(f"🚨 [Акк {acc_id}] Инвентарь забит ({count} шт)! Инициирую авто-слив на основу...", flush=True)
+                try: await client.send_message(TRADE_BOT, f"/trade {MAIN_ACC_ID}")
+                except Exception as e: print(f"❌ Ошибка вызова трейда: {e}", flush=True)
+
+    # 2. Обработка кулдауна ткарточки, если взяли руками или выпала раньше
     if "вам выпал" in text or "карта" in text:
         st["timers"]["tcard"] = 7200
     elif "через" in text and hasattr(msg, "reply_to_message") and msg.reply_to_message:
@@ -149,7 +167,7 @@ async def handle_messages(client, msg):
             sec = parse_time(text)
             st["timers"]["tcard"] = sec if sec > 0 else 300
 
-    # Авто-скупка контейнеров
+    # 3. Авто-скупка контейнеров
     if "раскуплены" in text and "контейнер" in text:
         sec = parse_time(text)
         st["timers"]["containers"] = sec if sec > 0 else 600
@@ -166,7 +184,7 @@ async def handle_messages(client, msg):
             st["locks"]["containers"] = False
             st["timers"]["containers"] = 15
 
-    # --- БРОНЕБОЙНОЕ АВТО-ПРИНЯТИЕ ТРЕЙДА (БЕЗ АВИТО) ---
+    # 4. БРОНЕБОЙНОЕ АВТО-ПРИНЯТИЕ ТРЕЙДА
     if "предложение обмена" in text or "вам пришло предложение" in text:
         print(f"📩 [Акк {acc_id}] Обнаружен входящий трейд! Пробую принять...", flush=True)
         await delay(1.0, 2.0)
@@ -208,7 +226,7 @@ async def console():
 # --- ГЛАВНЫЙ ЗАПУСК СИСТЕМЫ ---
 async def main():
     global clients
-    print("🛠 Запуск фермы из 5 аккаунтов (Авито отключено)...", flush=True)
+    print("🛠 Запуск объединенной фермы из 5 аккаунтов...", flush=True)
     
     raw_clients = []
     for i, session in enumerate(SESSIONS):
@@ -223,7 +241,6 @@ async def main():
             in_memory=True
         )
         
-        # Регистрируем обработчик сообщений для каждого аккаунта
         c.add_handler(handlers.MessageHandler(
             handle_messages, 
             filters.chat([TRADE_BOT, ROULETTE_BOT])
@@ -232,7 +249,7 @@ async def main():
 
     for acc_num, c in raw_clients:
         try:
-            await asyncio.sleep(3.0)  # Защита от флудвейта при массовом старте
+            await asyncio.sleep(3.0)  # Защита от флудвейта
             await c.start()
             clients.append(c)
             
@@ -248,7 +265,7 @@ async def main():
             
             print(f"✅ Аккаунт {acc_num} успешно запущен: @{me.username or 'NoUsername'}", flush=True)
             
-            # Включаем независимые циклы для каждого аккаунта
+            # Включаем циклы задач
             asyncio.create_task(timer_loop(acc_num))
             asyncio.create_task(tcard_loop(c, acc_num))
             asyncio.create_task(container_loop(c, acc_num))
@@ -264,3 +281,4 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
+            
