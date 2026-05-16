@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import os, asyncio, random, datetime, threading
 from flask import Flask
-from pyrogram import Client, handlers
+from pyrogram import Client, filters, handlers
 
 # --- СЕРВЕР ДЛЯ RENDER (KEEP-ALIVE) ---
 app = Flask(__name__)
@@ -17,220 +17,193 @@ SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
 clients = []
-my_usernames = set()  
+my_usernames = set()  # Список юзернеймов твоих аккаунтов фермы
 
-# --- СВЕРХНАДЕЖНЫЙ ДВИЖОК ПОШАГОВЫХ КЛИКОВ (ЧЕРЕЗ MSG.CLICK) ---
-async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
-    for attempt in range(12):  
-        await asyncio.sleep(2)
-        try:
-            async for msg in client.get_chat_history(bot_chat, limit=1):
-                if not msg.reply_markup:
-                    continue
-                
-                fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
-                if last_fp and fp == last_fp:
-                    continue
-                
-                for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
+# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ КЛИКА (ЧЕРЕЗ METHOD CLICK) ---
+async def smart_click(client, chat_id, message_id, variants, pick_first=False):
+    try:
+        async for message in client.get_chat_history(chat_id, limit=1):
+            if message.id == message_id and message.reply_markup:
+                for row_idx, row in enumerate(message.reply_markup.inline_keyboard):
                     for col_idx, btn in enumerate(row):
-                        text_lower = btn.text.lower().strip()
-                        data_lower = (btn.callback_data or "").lower().strip()
+                        data = btn.callback_data or ""
                         
                         if pick_first:
-                            if "назад" not in text_lower and "back" not in data_lower and "изменить" not in text_lower:
-                                # Используем железный метод клика Pyrofork
-                                await msg.click(row_idx, col_idx)
-                                print(f"✅ [{step_name}] Авто-выбор первой кнопки: [{btn.text}]", flush=True)
-                                return True, fp
-                        else:
-                            for kw in keywords:
-                                kw_l = kw.lower().strip()
-                                if kw_l in text_lower or data_lower.startswith(kw_l):
-                                    # Кликаем по индексу строки и столбца кнопки
-                                    await msg.click(row_idx, col_idx)
-                                    print(f"✅ [{step_name}] Успешно нажата кнопка: [{btn.text}]", flush=True)
-                                    return True, fp
-        except Exception as e:
-            print(f"❌ Ошибка выполнения шага {step_name}: {e}", flush=True)
-    return False, last_fp
+                            if "назад" not in btn.text.lower() and "back" not in data.lower():
+                                # Нажимаем на кнопку встроенным методом Pyrofork по её координатам
+                                await message.click(row_idx, col_idx)
+                                return True, btn.text
+                        elif any(v in btn.text or data.startswith(v) for v in variants):
+                            await message.click(row_idx, col_idx)
+                            return True, btn.text
+    except Exception as e:
+        print(f"❌ Ошибка клика: {e}", flush=True)
+    return False, None
 
-# --- ЛОГИКА ДЛЯ ПОЛУЧАТЕЛЯ ---
-async def receiver_trade_logic(client, acc_id):
-    print(f"📦 [Акк {acc_id} - Получатель] Запуск умного сборщика телефонов в трейд...", flush=True)
-    
-    res, last_fp = await execute_menu_step(client, "Кнопка Добавить", ["добавить телефон", "trade_add_phone_start"], False, "")
-    if not res: return
-
-    res, last_fp = await execute_menu_step(client, "Выбор Состояния", [], True, last_fp)
-    if not res: return
-
-    res, last_fp = await execute_menu_step(client, "Выбор Редкости", [], True, last_fp)
-    if not res: return
-
-    res, last_fp = await execute_menu_step(client, "Выбор Модели", [], True, last_fp)
-    if not res: return
-
-    res, last_fp = await execute_menu_step(client, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
-    if not res: return
-
-    res, last_fp = await execute_menu_step(client, "Финал Получателя", ["подтвердить", "trade_confirm"], False, last_fp)
-    if res:
-        print(f"🎉 [Акк {acc_id} - Получатель] Все этапы пройдены! Трейд укомплектован.", flush=True)
-
-# --- ЛОГИКА ДЛЯ ОТПРАВИТЕЛЯ ---
+# --- ЛОГИКА ДЛЯ ОТПРАВИТЕЛЯ (ТОЛЬКО ПОДТВЕРЖДЕНИЕ В КОНЦЕ) ---
 async def sender_confirm_logic(client, acc_id):
-    print(f"⏳ [Акк {acc_id} - Отправитель] Засыпаю на 32 секунды, даю получателю собрать предметы...", flush=True)
-    await asyncio.sleep(32)
-    print(f"✍️ [Акк {acc_id} - Отправитель] Время вышло. Подтверждаю обмен...", flush=True)
+    # Ждем 30 секунд, пока принимающий аккаунт спокойно добавляет свои телефоны
+    await asyncio.sleep(30)
+    print(f"✍️ [Акк {acc_id} - Отправитель] Время вышло. Подтверждаю трейд со своей стороны...", flush=True)
     try:
         async for msg in client.get_chat_history(bot_chat, limit=1):
             if msg.reply_markup:
-                for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
-                    for col_idx, btn in enumerate(row):
-                        if "подтвердить" in btn.text.lower() or (btn.callback_data and "trade_confirm" in btn.callback_data.lower()):
-                            await msg.click(row_idx, col_idx)
-                            print(f"✅ [Acc {acc_id} - Отправитель] Трейд зафиксирован и подтвержден!", flush=True)
-                            return
+                res, txt = await smart_click(client, bot_chat, msg.id, ["Подтвердить", "trade_confirm"])
+                if res:
+                    print(f"✅ [Акк {acc_id} - Отправитель] Успешно подтвердил чистый трейд!", flush=True)
     except Exception as e:
-        print(f"❌ Ошибка подтверждения у отправителя {acc_id}: {e}", flush=True)
+        print(f"❌ Ошибка подтверждения на стороне отправителя {acc_id}: {e}", flush=True)
+
+# --- ЛОГИКА ДЛЯ ПОЛУЧАТЕЛЯ (ПОЛНЫЙ СБОР И НАПОЛНЕНИЕ ТРЕЙДА) ---
+async def receiver_trade_logic(client, acc_id):
+    print(f"📦 [Акк {acc_id} - Получатель] Начинаю процесс добавления телефонов в обмен...", flush=True)
+    
+    steps = [
+        {"n": "Добавить", "v": ["Добавить телефон", "trade_add_phone_start"]},
+        {"n": "Тип", "v": [], "pick": True},       # Первое состояние (Рабочие/Сломанные)
+        {"n": "Редкость", "v": [], "pick": True},   # Первое доступное качество (Ширпотреб)
+        {"n": "Модель", "v": [], "pick": True},     # Первая модель телефона
+        {"n": "Кол-во", "v": ["Добавить 1 шт.", "trade_add_single"]},
+        {"n": "Финал", "v": ["Подтвердить", "trade_confirm"]}
+    ]
+
+    last_fingerprint = ""
+
+    for step in steps:
+        # Цикл попыток для каждого шага меню, если бот немного притормаживает
+        step_passed = False
+        for attempt in range(10):
+            await asyncio.sleep(2.5)
+            try:
+                async for msg in client.get_chat_history(bot_chat, limit=1):
+                    if not msg.reply_markup:
+                        continue
+                        
+                    # Создаем слепок текущих кнопок на экране, чтобы не кликать в пустоту
+                    current_fp = "|".join([b.text for r in msg.reply_markup.inline_keyboard for b in r])
+                    if last_fingerprint and current_fp == last_fingerprint:
+                        # Если меню еще не обновилось с прошлого шага — ждем следующую попытку
+                        continue
+                    
+                    res, txt = await smart_click(client, bot_chat, msg.id, step.get("v", []), step.get("pick", False))
+                    if res:
+                        print(f"⚡ [Акк {acc_id} - Получатель] Шаг [{step['n']}] пройден: {txt}", flush=True)
+                        last_fingerprint = current_fp
+                        step_passed = True
+                        break
+            except Exception as e:
+                print(f"❌ Ошибка на шаге {step['n']} (попытка {attempt}): {e}", flush=True)
+            
+            if step_passed:
+                break
 
 # --- ЛОГИКА РУЧНОГО СБОРА С ФЕРМЫ ---
 async def manual_farm_logic(client, acc_id):
     try:
-        print(f"🚜 [Акк {acc_id}] Собираю прибыль...", flush=True)
+        print(f"🚜 [Акк {acc_id}] Ручной сбор фермы по команде .farmn", flush=True)
         await client.send_message(bot_chat, "/tfarm")
-        await asyncio.sleep(4)
+        await asyncio.sleep(5)
         async for msg in client.get_chat_history(bot_chat, limit=1):
             if msg.reply_markup:
-                for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
-                    for col_idx, btn in enumerate(row):
-                        if "снять деньги" in btn.text.lower() or (btn.callback_data and "farm_claim" in btn.callback_data.lower()):
-                            await msg.click(row_idx, col_idx)
-                            print(f"💰 [Акк {acc_id}] Деньги успешно переведены на баланс!", flush=True)
-                            return
+                res, txt = await smart_click(client, bot_chat, msg.id, ["Снять деньги", "farm_claim"])
+                if res:
+                    print(f"💰 [Акк {acc_id}] Деньги с фермы успешно сняты вручную!", flush=True)
     except Exception as e:
-        print(f"❌ Ошибка сбора на акке {acc_id}: {e}", flush=True)
+        print(f"❌ Ошибка ручного сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
+# --- ОБРАБОТЧИК ВХОДЯЩИХ СООБЩЕНИЙ ОТ ИГРОВОГО БОТА ---
 async def handle_bot_messages(client, message):
-    if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
-        return
-
-    if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
-        return
-        
-    try: acc_id = clients.index(client) + 1
-    except: acc_id = "Х"
-
-    full_text = ""
-    if message.text: full_text += message.text.lower()
-    if message.caption: full_text += message.caption.lower()
+    if not message.text: return
+    text = message.text.lower()
     
-    if message.reply_markup:
-        for row_idx, row in enumerate(message.reply_markup.inline_keyboard):
-            for col_idx, btn in enumerate(row):
-                text_btn = btn.text.lower()
-                data_btn = (btn.callback_data or "").lower()
-                
-                # Твой паттерн детекта кнопки «Принять»
-                if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
-                    print(f"🎯 [Акк {acc_id}] Найдена инлайн-кнопка трейда! Нажимаю...", flush=True)
-                    await asyncio.sleep(1) 
-                    
-                    try:
-                        # Используем нативный метод .click() прямо по объекту сообщения
-                        await message.click(row_idx, col_idx)
-                        print(f"✅ [Акк {acc_id}] Метод .click() сработал! Трейд принят.", flush=True)
-                        asyncio.create_task(receiver_trade_logic(client, acc_id))
-                        return
-                    except Exception as e:
-                        print(f"❌ Ошибка вызова .click() на акке {acc_id}: {e}", flush=True)
+    if "вам пришло предложение обмена от" in text:
+        try:
+            sender_username = text.split("от @")[1].split()[0].strip().replace(",", "").replace(".", "")
+        except:
+            sender_username = ""
 
-# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
+        if sender_username in my_usernames:
+            try: acc_id = clients.index(client) + 1
+            except: acc_id = "Х"
+                
+            print(f"🤝 [Акк {acc_id}] Принял уведомление. Трейд от своего же акка @{sender_username}! Нажимаю Принять...", flush=True)
+            await asyncio.sleep(2) 
+            
+            res, txt = await smart_click(client, bot_chat, message.id, ["Принять", "trade_accept"])
+            if res:
+                print(f"✅ [Акк {acc_id}] Трейд принят! Перехожу к наполнению предметами...", flush=True)
+                asyncio.create_task(receiver_trade_logic(client, acc_id))
+
+# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД (.ping, .farmn, .t, .т) ---
 async def handle_my_messages(client, message):
     if not message.text: return
+    text = message.text.lower().strip()
     
-    my_id = getattr(client, "me_id", 0)
-    if not message.from_user or message.from_user.id != my_id:
-        return
-        
-    parts = message.text.split()
-    if not parts: return
-    cmd = parts[0].lower().strip()
-    
-    try: acc_id = clients.index(client) + 1
-    except: acc_id = 1
-
-    if cmd == ".ping":
-        try: await message.edit("🚀 **Pyrofork юзербот полностью активен!**")
-        except: pass
+    if text.startswith(".ping"):
+        try:
+            await message.edit("🚀 **Pyrofork юзербот полностью активен!**")
+        except Exception as e:
+            print(f"❌ Ошибка изменения сообщения: {e}", flush=True)
         return
 
-    if cmd == ".farmn":
+    if text.startswith(".farmn"):
         try: await message.delete()
         except: pass
+        
         for i, cl in enumerate(clients):
             asyncio.create_task(manual_farm_logic(cl, i + 1))
         return
 
-    if cmd in [".trade", ".t", ".т"] or cmd.startswith(".t@") or cmd.startswith(".т@"):
-        print(f"⚡ [Акк {acc_id}] Поймал команду трейда: '{message.text}'", flush=True)
+    if text.startswith(".trade") or text.startswith(".t") or text.startswith(".т"):
         target = None
+        parts = message.text.split()
         
-        if message.reply_to_message and message.reply_to_message.from_user:
-            user = message.reply_to_message.from_user
-            target = user.username or str(user.id)
-        elif "@" in parts[0]:
-            target = parts[0].split("@", 1)[1].strip()
+        if message.reply_to_message:
+            reply_user = message.reply_to_message.from_user
+            if reply_user and reply_user.username:
+                target = reply_user.username
         elif len(parts) >= 2:
-            target = parts[1].replace("@", "").strip()
+            target = parts[1].replace("@", "")
 
-        if not target:
-            print(f"⚠️ [Акк {acc_id}] Ошибка: не указан юзернейм и нет реплая!", flush=True)
-            try: await message.edit("❌ **Ошибка:** Напишите `.t @username` или ответьте командой `.t` на сообщение игрока.")
+        if target:
+            try: await message.delete() 
             except: pass
-            return
-
-        try: await message.delete()
-        except: pass
             
-        print(f"📣 [Акк {acc_id} - Отправитель] Инициирую трейд на {target}...", flush=True)
-        
-        bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
-        await client.send_message(bot_chat, bot_cmd)
-        
-        asyncio.create_task(sender_confirm_logic(client, acc_id))
+            try: acc_id = clients.index(client) + 1
+            except: acc_id = 1
+                
+            print(f"📣 [Акк {acc_id} - Отправитель] Инициирую трейд на @{target}...", flush=True)
+            await client.send_message(bot_chat, f"/trade @{target}")
+            
+            if target.lower() in my_usernames:
+                asyncio.create_task(sender_confirm_logic(client, acc_id))
 
-# --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
+# --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ (КАРТОЧКИ РАЗ В 2 ЧАСА) ---
 async def bg_tasks(client, acc_id):
-    print(f"🟢 [Акк {acc_id}] Цикл отправки карточек запущен!", flush=True)
+    print(f"🟢 [Акк {acc_id}] Фоновые задачи запущены! Отправляю первую карточку...", flush=True)
     try:
         await client.send_message(bot_chat, "ткарточка")
     except Exception as e:
-        print(f"❌ Стартовая карточка не ушла на акке {acc_id}: {e}", flush=True)
+        print(f"❌ Не удалось отправить стартовую карточку на акке {acc_id}: {e}", flush=True)
 
     while True:
         await asyncio.sleep(121 * 60)
         try:
-            print(f"🃏 [Акк {acc_id}] Время пришло: отправляю 'ткарточка'...", flush=True)
+            print(f"🃏 [Акк {acc_id}] Повторный круг: Отправляю 'ткарточка'...", flush=True)
             await client.send_message(bot_chat, "ткарточка")
             
             if acc_id != 5:
                 now = datetime.datetime.utcnow()
                 if now.hour == 21 and now.minute <= 25:
+                    print(f"🚜 [Акк {acc_id}] Время авто-сбора фермы!", flush=True)
                     await client.send_message(bot_chat, "/tfarm")
                     await asyncio.sleep(10)
                     async for msg in client.get_chat_history(bot_chat, limit=1):
-                        if msg.reply_markup:
-                            for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
-                                for col_idx, btn in enumerate(row):
-                                    if "снять деньги" in btn.text.lower() or (btn.callback_data and "farm_claim" in btn.callback_data.lower()):
-                                        await msg.click(row_idx, col_idx)
+                        await smart_click(client, bot_chat, msg.id, ["Снять деньги", "farm_claim"])
         except Exception as e:
-            print(f"❌ Ошибка в таймере аккаунта {acc_id}: {e}", flush=True)
+            print(f"❌ Ошибка в bg_tasks для аккаунта {acc_id}: {e}", flush=True)
 
-# --- ЗАПУСК КЛИЕНТОВ ---
+# --- ЗАПУСК ВСЕХ КЛИЕНТОВ ---
 async def start_bot():
     global clients, my_usernames
     print("🛠 Инициализация Pyrofork клиентов...", flush=True)
@@ -248,10 +221,8 @@ async def start_bot():
             in_memory=True
         )
         
-        c.add_handler(handlers.MessageHandler(handle_my_messages))
-        c.add_handler(handlers.MessageHandler(handle_bot_messages))
-        c.add_handler(handlers.EditedMessageHandler(handle_bot_messages))
-        
+        c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
+        c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat) & ~filters.me))
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
@@ -260,18 +231,16 @@ async def start_bot():
             clients.append(c)
             
             me = await c.get_me()
-            c.me_id = me.id  
-            
             if me.username:
                 my_usernames.add(me.username.lower())
-            my_usernames.add(str(me.id)) 
                 
-            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | ID: {me.id})", flush=True)
+            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
         except Exception as e:
-            print(f"⚠️ [Ошибка] Аккаунт {acc_num} не запущен: {e}", flush=True)
+            print(f"⚠️ [Ошибка] Аккаунт {acc_num} НЕ запущен! Причина: {e}", flush=True)
 
-    print(f"💎 Юзербот запущен. Активных сессий: {len(clients)} из {len(raw_clients)}", flush=True)
+    print(f"💎 Запуск завершен. Наших аккаунтов в базе для авто-принятия: {my_usernames}", flush=True)
+    print(f"💎 Всего работает аккаунтов: {len(clients)} из {len(raw_clients)}", flush=True)
     
     while True:
         await asyncio.sleep(3600)
