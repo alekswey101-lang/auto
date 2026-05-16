@@ -178,23 +178,29 @@ async def handle_bot_messages(client, msg):
             for btn in ["обновить", "далее", "➡️", "след"]:
                 if await click(client, msg, btn): break
 
-    # Авто-принятие трейдов от своих же аккаунтов фермы
-    if "предложение обмена" in text:
-        try: sender = text.split("от @")[1].split()[0].strip().replace(",", "").replace(".", "")
-        except: sender = ""
-        if sender in my_usernames:
-            await delay(1.0, 2.0)
-            await click(client, msg, "принять")
-            print(f"🤝 [Акк {acc_id}] Автоматически принял трейд от @{sender}", flush=True)
+    # --- БРОНЕБОЙНОЕ АВТО-ПРИНЯТИЕ ТРЕЙДА ---
+    if "предложение обмена" in text or "вам пришло предложение" in text:
+        print(f"📩 [Акк {acc_id}] Обнаружено уведомление о трейде! Пробую принять...", flush=True)
+        await delay(1.0, 2.0)
+        
+        # Ищем кнопку по тексту "принять", игнорируя эмодзи ✅ вокруг нее
+        for name_variant in ["принять", "✅ принять"]:
+            if await click(client, msg, name_variant):
+                print(f"🤝 [Акк {acc_id}] Успешно нажал кнопку ПРИНЯТЬ!", flush=True)
+                return
+        return
             
     elif "готовность: ❌" in text and "✅" in text:
         await delay(1.5, 3.0)
-        await click(client, msg, "готов")
+        if await click(client, msg, "готов"):
+            print(f"👍 [Акк {acc_id}] Нажал кнопку ГОТОВ!", flush=True)
         
     elif "подтвердите обмен" in text or "подтвердите" in text:
         await delay(1.0, 2.0)
-        await click(client, msg, "подтвердить")
-        print(f"🎉 [Акк {acc_id}] Трейд успешно завершен автоматикой!", flush=True)
+        for confirm_variant in ["подтвердить", "подтверждаю"]:
+            if await click(client, msg, confirm_variant):
+                print(f"🎉 [Акк {acc_id}] Трейд успешно подтвержден автоматикой!", flush=True)
+                return
 
 # --- ТЕКСТОВЫЕ КОМАНДЫ ДЛЯ ТЕБЯ ---
 async def handle_my_messages(client, msg):
