@@ -53,47 +53,65 @@ async def trade_logic(client, target_user, acc_id):
         ]
 
         for step in steps:
-            await asyncio.sleep(4) # Пауза между шагами, чтобы бот успел обновить кнопки
+            await asyncio.sleep(4)
             async for msg in client.get_chat_history(bot_chat, limit=1):
                 if msg.reply_markup:
                     res, txt = await smart_click(client, bot_chat, msg.id, step.get("v", []), step.get("pick", False))
                     if res:
                         print(f"📦 [Акк {acc_id}] Успешный шаг [{step['n']}]: {txt}", flush=True)
-                        break # Выходим из внутреннего перебора сообщения, идем к следующему шагу step
+                        break
     except Exception as e:
         print(f"❌ Ошибка в процессе трейда на акке {acc_id}: {e}", flush=True)
 
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ---
 async def handle_messages(client, message):
     if not message.text: return
+    text = message.text.lower().strip()
     
-    # ПИНГ
-    if message.text.startswith(".ping"):
+    # --- КУСОК КОМАНДЫ ПИНГ ---
+    if text.startswith(".ping"):
         try:
             await message.edit("🚀 **Pyrofork юзербот полностью активен!**")
             print("🔔 Команда .ping успешно сработала", flush=True)
         except Exception as e:
             print(f"❌ Ошибка изменения сообщения: {e}", flush=True)
+        return
 
-    # ТРЕЙД
-    elif message.text.startswith(".trade"):
+    # --- УНИВЕРСАЛЬНЫЙ ТРЕЙД (.trade, .t, .т) ---
+    if text.startswith(".trade") or text.startswith(".t") or text.startswith(".т"):
+        target = None
         parts = message.text.split()
-        if len(parts) < 2: return
-        target = parts[1].replace("@", "")
-        try:
-            await message.delete()
-        except: pass
         
-        try:
-            acc_id = clients.index(client) + 1
-        except:
-            acc_id = 1
+        # Вариант 1: Трейд через Reply (ответ на сообщение)
+        if message.reply_to_message:
+            reply_user = message.reply_to_message.from_user
+            if reply_user and reply_user.username:
+                target = reply_user.username
+            else:
+                # Если у юзера нет юзернейма, пишем ошибку в лог и выходим
+                print("⚠️ Не удается запустить трейд через реплей: у пользователя нет @username", flush=True)
+                return
+
+        # Вариант 2: Трейд по вписанному юзернейму (например, .t @asd123)
+        elif len(parts) >= 2:
+            target = parts[1].replace("@", "")
+
+        # Если цель определена — запускаем
+        if target:
+            try:
+                await message.delete() # Удаляем наше триггер-сообщение
+            except: 
+                pass
             
-        asyncio.create_task(trade_logic(client, target, acc_id))
+            try:
+                acc_id = clients.index(client) + 1
+            except:
+                acc_id = 1
+                
+            asyncio.create_task(trade_logic(client, target, acc_id))
 
 # --- ФОНОВЫЕ ЗАДАЧИ ---
 async def bg_tasks(client, acc_id):
-    # МГНОВЕННЫЙ СТАРТ ПРИ ЗАПУСКЕ
     print(f"🟢 [Акк {acc_id}] Фоновые задачи запущены! Отправляю первую карточку...", flush=True)
     try:
         await client.send_message(bot_chat, "ткарточка")
@@ -101,12 +119,11 @@ async def bg_tasks(client, acc_id):
         print(f"❌ Не удалось отправить стартовую карточку на акке {acc_id}: {e}", flush=True)
 
     while True:
-        await asyncio.sleep(121 * 60) # Ждем 2 часа перед следующим кругом
+        await asyncio.sleep(121 * 60)
         try:
             print(f"🃏 [Акк {acc_id}] Повторный круг: Отправляю 'ткарточка'...", flush=True)
             await client.send_message(bot_chat, "ткарточка")
             
-            # Авто-сбор фермы в 21:10 UTC (02:10 по Шымкенту)
             if acc_id != 5:
                 now = datetime.datetime.utcnow()
                 if now.hour == 21 and now.minute <= 25:
@@ -123,11 +140,11 @@ async def start_bot():
     global clients
     print("🛠 Инициализация Pyrofork клиентов...", flush=True)
     
+    raw_clients = []
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": 
             continue
         
-        # Запускаем сессии в памяти (без создания файлов базы данных)
         c = Client(
             name=f"memory_session_{i+1}",
             api_id=API_ID,
@@ -135,19 +152,19 @@ async def start_bot():
             session_string=session.strip(),
             in_memory=True
         )
-        
         c.add_handler(handlers.MessageHandler(handle_messages, filters.me))
-        clients.append(c)
+        raw_clients.append((i+1, c))
 
-    # Запуск всех клиентов параллельно
-    for i, c in enumerate(clients):
-        await c.start()
-        acc_id = i + 1
-        print(f"✅ Аккаунт {acc_id} успешно авторизован!", flush=True)
-        # Запускаем фоновые задачи без искусственных задержек
-        asyncio.create_task(bg_tasks(c, acc_id))
+    for acc_num, c in raw_clients:
+        try:
+            await c.start()
+            clients.append(c)
+            print(f"✅ Аккаунт {acc_num} успешно авторизован!", flush=True)
+            asyncio.create_task(bg_tasks(c, acc_num))
+        except Exception as e:
+            print(f"⚠️ [Ошибка] Аккаунт {acc_num} НЕ запущен! Причина: {e}", flush=True)
 
-    print("💎 Все аккаунты онлайн, карточки отправлены. Ожидаю команд.", flush=True)
+    print(f"💎 Запуск завершен. Работает аккаунтов: {len(clients)} из {len(raw_clients)}", flush=True)
     
     while True:
         await asyncio.sleep(3600)
@@ -155,4 +172,3 @@ async def start_bot():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(start_bot())
-                        
