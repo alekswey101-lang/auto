@@ -146,9 +146,8 @@ async def manual_farm_logic(client, acc_id):
     except Exception as e:
         print(f"❌ Ошибка ручного сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ИСПРАВЛЕННЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ОТ БОТА ---
+# --- ОБРАБОТЧИК СООБЩЕНИЙ ОТ БОТА ---
 async def handle_bot_messages(client, message):
-    # Если сообщение отправлено НАМИ ЖЕ (наш текст бота), игнорируем его железно по ID
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
 
@@ -237,7 +236,7 @@ async def bg_tasks(client, acc_id):
         except Exception as e:
             print(f"❌ Ошибка в bg_tasks для аккаунта {acc_id}: {e}", flush=True)
 
-# --- ЗАПУСК ВСЕХ КЛИЕНТОВ ---
+# --- ИСПРАВЛЕННЫЙ БЕЗОПАСНЫЙ ЗАПУСК КЛИЕНТОВ ---
 async def start_bot():
     global clients, my_usernames
     print("🛠 Инициализация Pyrofork клиентов...", flush=True)
@@ -255,13 +254,15 @@ async def start_bot():
             in_memory=True
         )
         
-        # Полностью чистые хэндлеры без капризных фильтров библиотеки Pyrogram
         c.add_handler(handlers.MessageHandler(handle_my_messages))
         c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat)))
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
         try:
+            # Искусственный зазор, чтобы не вызывать ошибку 134 в асинхронном движке
+            await asyncio.sleep(3.5)
+            
             await c.start()
             clients.append(c)
             
@@ -280,4 +281,4 @@ async def start_bot():
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    loop.run_until
+    loop.run_until_complete(start_bot())
