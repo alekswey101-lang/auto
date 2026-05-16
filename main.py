@@ -282,7 +282,7 @@ async def start_bot():
             asyncio.create_task(timer_loop(acc_num))
             asyncio.create_task(tcard_loop(c, acc_num))
             asyncio.create_task(container_loop(c, acc_num))
-            asyncio.create_task(avito_loop(c, acc_num))
+            #asyncio.create_task(avito_loop(c, acc_num))
             asyncio.create_task(daily_loop(c, acc_num))
             
         except Exception as e:
