@@ -112,6 +112,10 @@ async def manual_farm_logic(client, acc_id):
 
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
 async def handle_bot_messages(client, message):
+    # Ручной фильтр: реагируем только на сообщения внутри чата бота
+    if not message.chat or message.chat.username != bot_chat:
+        return
+
     # Защита от обработки собственных сообщений
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
@@ -138,7 +142,7 @@ async def handle_bot_messages(client, message):
                         for btn in row:
                             if "принять" in btn.text.lower() or (btn.callback_data and "trade_accept" in btn.callback_data.lower()):
                                 await client.request_callback_answer(bot_chat, message.id, btn.callback_data)
-                                print(f"✅ [Акк {acc_id}] Входящий трейд принят! Включаю автоматику наполнения...", flush=True)
+                                print(f"✅ [Acc {acc_id}] Входящий трейд принят! Включаю автоматику наполнения...", flush=True)
                                 asyncio.create_task(receiver_trade_logic(client, acc_id))
                                 return
             except Exception as e:
@@ -148,7 +152,7 @@ async def handle_bot_messages(client, message):
 async def handle_my_messages(client, message):
     if not message.text: return
     
-    # Проверка авторства сообщения без использования неточного фильтра filters.me
+    # Ручной фильтр: проверяем, что сообщение написали именно мы
     my_id = getattr(client, "me_id", 0)
     if not message.from_user or message.from_user.id != my_id:
         return
@@ -179,20 +183,14 @@ async def handle_my_messages(client, message):
         print(f"⚡ [Акк {acc_id}] Поймал команду трейда: '{message.text}'", flush=True)
         target = None
         
-        # 1. Проверяем, если это реплей на сообщение
         if message.reply_to_message and message.reply_to_message.from_user:
             user = message.reply_to_message.from_user
             target = user.username or str(user.id)
-            
-        # 2. Если написали слитно, например `.t@username`
         elif "@" in parts[0]:
             target = parts[0].split("@", 1)[1].strip()
-            
-        # 3. Если написали через пробел, например `.t @username`
         elif len(parts) >= 2:
             target = parts[1].replace("@", "").strip()
 
-        # Если цель так и не определена, выдаем ошибку в чат, а не молчим
         if not target:
             print(f"⚠️ [Акк {acc_id}] Ошибка: не указан юзернейм и нет реплая!", flush=True)
             try: await message.edit("❌ **Ошибка:** Напишите `.t @username` или ответьте командой `.t` на сообщение игрока.")
@@ -204,7 +202,6 @@ async def handle_my_messages(client, message):
             
         print(f"📣 [Акк {acc_id} - Отправитель] Инициирую трейд на {target}...", flush=True)
         
-        # Формируем отправку боту (если цель состоит только из цифр — отправляем как ID)
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
         
@@ -257,9 +254,9 @@ async def start_bot():
             in_memory=True
         )
         
-        # Регистрируем сырые обработчики без ломающихся глобальных фильтров
+        # Подключаем сырые обработчики без ломающихся внешних фильтров Pyrogram
         c.add_handler(handlers.MessageHandler(handle_my_messages))
-        c.add_handler(handlers.MessageHandler(handle_bot_messages, handlers.orientation.Filter(lambda _, __, m: m.chat and m.chat.username == bot_chat)))
+        c.add_handler(handlers.MessageHandler(handle_bot_messages))
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
@@ -268,11 +265,11 @@ async def start_bot():
             clients.append(c)
             
             me = await c.get_me()
-            c.me_id = me.id  # Жестко сохраняем ID внутрь объекта
+            c.me_id = me.id  # Жестко сохраняем ID внутрь объекта сессии
             
             if me.username:
                 my_usernames.add(me.username.lower())
-            my_usernames.add(str(me.id)) # На случай если у акка фермы нет юзернейма
+            my_usernames.add(str(me.id)) 
                 
             print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | ID: {me.id})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
