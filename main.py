@@ -19,7 +19,7 @@ bot_chat = "phonegetcardsbot"
 clients = []
 my_usernames = set()  
 
-# --- СВЕРХНАДЕЖНЫЙ ДВИЖОК ПОШАГОВЫХ КЛИКОВ ---
+# --- СВЕРХНАДЕЖНЫЙ ДВИЖОК ПОШАГОВЫХ КЛИКОВ (ЧЕРЕЗ MSG.CLICK) ---
 async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
     for attempt in range(12):  
         await asyncio.sleep(2)
@@ -32,21 +32,23 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
                 if last_fp and fp == last_fp:
                     continue
                 
-                for row in msg.reply_markup.inline_keyboard:
-                    for btn in row:
+                for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
+                    for col_idx, btn in enumerate(row):
                         text_lower = btn.text.lower().strip()
                         data_lower = (btn.callback_data or "").lower().strip()
                         
                         if pick_first:
                             if "назад" not in text_lower and "back" not in data_lower and "изменить" not in text_lower:
-                                await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
+                                # Используем железный метод клика Pyrofork
+                                await msg.click(row_idx, col_idx)
                                 print(f"✅ [{step_name}] Авто-выбор первой кнопки: [{btn.text}]", flush=True)
                                 return True, fp
                         else:
                             for kw in keywords:
                                 kw_l = kw.lower().strip()
                                 if kw_l in text_lower or data_lower.startswith(kw_l):
-                                    await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
+                                    # Кликаем по индексу строки и столбца кнопки
+                                    await msg.click(row_idx, col_idx)
                                     print(f"✅ [{step_name}] Успешно нажата кнопка: [{btn.text}]", flush=True)
                                     return True, fp
         except Exception as e:
@@ -84,11 +86,11 @@ async def sender_confirm_logic(client, acc_id):
     try:
         async for msg in client.get_chat_history(bot_chat, limit=1):
             if msg.reply_markup:
-                for row in msg.reply_markup.inline_keyboard:
-                    for btn in row:
+                for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
+                    for col_idx, btn in enumerate(row):
                         if "подтвердить" in btn.text.lower() or (btn.callback_data and "trade_confirm" in btn.callback_data.lower()):
-                            await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
-                            print(f"✅ [Акк {acc_id} - Отправитель] Трейд зафиксирован и подтвержден!", flush=True)
+                            await msg.click(row_idx, col_idx)
+                            print(f"✅ [Acc {acc_id} - Отправитель] Трейд зафиксирован и подтвержден!", flush=True)
                             return
     except Exception as e:
         print(f"❌ Ошибка подтверждения у отправителя {acc_id}: {e}", flush=True)
@@ -101,22 +103,20 @@ async def manual_farm_logic(client, acc_id):
         await asyncio.sleep(4)
         async for msg in client.get_chat_history(bot_chat, limit=1):
             if msg.reply_markup:
-                for row in msg.reply_markup.inline_keyboard:
-                    for btn in row:
+                for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
+                    for col_idx, btn in enumerate(row):
                         if "снять деньги" in btn.text.lower() or (btn.callback_data and "farm_claim" in btn.callback_data.lower()):
-                            await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
+                            await msg.click(row_idx, col_idx)
                             print(f"💰 [Акк {acc_id}] Деньги успешно переведены на баланс!", flush=True)
                             return
     except Exception as e:
         print(f"❌ Ошибка сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ЕДИНЫЙ СВЕРХЧУВСТВИТЕЛЬНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
+# --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
 async def handle_bot_messages(client, message):
-    # Проверка чата
     if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
         return
 
-    # Пропуск исходящих от юзербота
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
         
@@ -127,28 +127,25 @@ async def handle_bot_messages(client, message):
     if message.text: full_text += message.text.lower()
     if message.caption: full_text += message.caption.lower()
     
-    # Полное логирование для отладки в Render: видим всё, что делает бот
     if message.reply_markup:
-        buttons_dump = [btn.text for row in message.reply_markup.inline_keyboard for btn in row]
-        print(f"🔍 [Акк {acc_id}] Получено/изменено сообщение бота. Кнопки: {buttons_dump}", flush=True)
-        
-        for row in message.reply_markup.inline_keyboard:
-            for btn in row:
+        for row_idx, row in enumerate(message.reply_markup.inline_keyboard):
+            for col_idx, btn in enumerate(row):
                 text_btn = btn.text.lower()
                 data_btn = (btn.callback_data or "").lower()
                 
-                # Ищем заветную кнопку принятия
+                # Твой паттерн детекта кнопки «Принять»
                 if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
-                    print(f"🎯 [Акк {acc_id}] Цель найдена! Нажимаю кнопку '{btn.text}'...", flush=True)
+                    print(f"🎯 [Акк {acc_id}] Найдена инлайн-кнопка трейда! Нажимаю...", flush=True)
                     await asyncio.sleep(1) 
                     
                     try:
-                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
-                        print(f"✅ [Акк {acc_id}] Успешно зашли в трейд! Стартую алгоритм сборщика...", flush=True)
+                        # Используем нативный метод .click() прямо по объекту сообщения
+                        await message.click(row_idx, col_idx)
+                        print(f"✅ [Акк {acc_id}] Метод .click() сработал! Трейд принят.", flush=True)
                         asyncio.create_task(receiver_trade_logic(client, acc_id))
                         return
                     except Exception as e:
-                        print(f"❌ Ошибка клика по кнопке трейда на акке {acc_id}: {e}", flush=True)
+                        print(f"❌ Ошибка вызова .click() на акке {acc_id}: {e}", flush=True)
 
 # --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
 async def handle_my_messages(client, message):
@@ -226,10 +223,10 @@ async def bg_tasks(client, acc_id):
                     await asyncio.sleep(10)
                     async for msg in client.get_chat_history(bot_chat, limit=1):
                         if msg.reply_markup:
-                            for row in msg.reply_markup.inline_keyboard:
-                                for btn in row:
+                            for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
+                                for col_idx, btn in enumerate(row):
                                     if "снять деньги" in btn.text.lower() or (btn.callback_data and "farm_claim" in btn.callback_data.lower()):
-                                        await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
+                                        await msg.click(row_idx, col_idx)
         except Exception as e:
             print(f"❌ Ошибка в таймере аккаунта {acc_id}: {e}", flush=True)
 
@@ -252,8 +249,6 @@ async def start_bot():
         )
         
         c.add_handler(handlers.MessageHandler(handle_my_messages))
-        
-        # МАГИЯ ТУТ: Вешаем один и тот же метод и на новые сообщения, и на ОТРЕДАКТИРОВАННЫЕ ботом
         c.add_handler(handlers.MessageHandler(handle_bot_messages))
         c.add_handler(handlers.EditedMessageHandler(handle_bot_messages))
         
