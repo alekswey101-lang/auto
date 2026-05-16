@@ -110,45 +110,45 @@ async def manual_farm_logic(client, acc_id):
     except Exception as e:
         print(f"❌ Ошибка сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
+# --- ЕДИНЫЙ СВЕРХЧУВСТВИТЕЛЬНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
 async def handle_bot_messages(client, message):
-    # Фильтр чата бота
+    # Проверка чата
     if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
         return
 
-    # Пропускаем свои сообщения
+    # Пропуск исходящих от юзербота
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
         
-    # Собираем абсолютно весь текст, какой только может быть в сообщении бота
+    try: acc_id = clients.index(client) + 1
+    except: acc_id = "Х"
+
     full_text = ""
     if message.text: full_text += message.text.lower()
     if message.caption: full_text += message.caption.lower()
     
-    try: acc_id = clients.index(client) + 1
-    except: acc_id = "Х"
-        
-    # Проверяем инлайн-кнопки
+    # Полное логирование для отладки в Render: видим всё, что делает бот
     if message.reply_markup:
+        buttons_dump = [btn.text for row in message.reply_markup.inline_keyboard for btn in row]
+        print(f"🔍 [Акк {acc_id}] Получено/изменено сообщение бота. Кнопки: {buttons_dump}", flush=True)
+        
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 text_btn = btn.text.lower()
                 data_btn = (btn.callback_data or "").lower()
                 
-                # ЖЕЛЕЗНЫЙ ТРИГГЕР: Если бот прислал сообщение с кнопкой принять/trade_accept,
-                # и в тексте сообщения ИЛИ на самих кнопках есть упоминание обмена/трейда — КЛИКАЕМ!
+                # Ищем заветную кнопку принятия
                 if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
-                    if "обмен" in full_text or "предложение" in full_text or "trade" in full_text or "accept" in data_btn:
-                        print(f"🤝 [Акк {acc_id}] Обнаружена кнопка трейда в сообщении бота! Нажимаю Принять...", flush=True)
-                        await asyncio.sleep(1.5) 
-                        
-                        try:
-                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
-                            print(f"✅ [Акк {acc_id}] Входящий трейд успешно принят! Запускаю пошаговый сбор предметов...", flush=True)
-                            asyncio.create_task(receiver_trade_logic(client, acc_id))
-                            return
-                        except Exception as e:
-                            print(f"❌ Ошибка нажатия кнопки 'Принять' на акке {acc_id}: {e}", flush=True)
+                    print(f"🎯 [Акк {acc_id}] Цель найдена! Нажимаю кнопку '{btn.text}'...", flush=True)
+                    await asyncio.sleep(1) 
+                    
+                    try:
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
+                        print(f"✅ [Акк {acc_id}] Успешно зашли в трейд! Стартую алгоритм сборщика...", flush=True)
+                        asyncio.create_task(receiver_trade_logic(client, acc_id))
+                        return
+                    except Exception as e:
+                        print(f"❌ Ошибка клика по кнопке трейда на акке {acc_id}: {e}", flush=True)
 
 # --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
 async def handle_my_messages(client, message):
@@ -252,7 +252,11 @@ async def start_bot():
         )
         
         c.add_handler(handlers.MessageHandler(handle_my_messages))
+        
+        # МАГИЯ ТУТ: Вешаем один и тот же метод и на новые сообщения, и на ОТРЕДАКТИРОВАННЫЕ ботом
         c.add_handler(handlers.MessageHandler(handle_bot_messages))
+        c.add_handler(handlers.EditedMessageHandler(handle_bot_messages))
+        
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
