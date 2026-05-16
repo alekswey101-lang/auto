@@ -17,7 +17,7 @@ SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
 clients = []
-my_usernames = set()  # Список юзернеймов и ID твоих аккаунтов
+my_usernames = set()  
 
 # --- СВЕРХНАДЕЖНЫЙ ДВИЖОК ПОШАГОВЫХ КЛИКОВ ---
 async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
@@ -82,7 +82,6 @@ async def sender_confirm_logic(client, acc_id):
     await asyncio.sleep(32)
     print(f"✍️ [Акк {acc_id} - Отправитель] Время вышло. Подтверждаю обмен...", flush=True)
     try:
-        # ИСПРАВЛЕНО: тут был async_for
         async for msg in client.get_chat_history(bot_chat, limit=1):
             if msg.reply_markup:
                 for row in msg.reply_markup.inline_keyboard:
@@ -100,7 +99,6 @@ async def manual_farm_logic(client, acc_id):
         print(f"🚜 [Акк {acc_id}] Собираю прибыль...", flush=True)
         await client.send_message(bot_chat, "/tfarm")
         await asyncio.sleep(4)
-        # ИСПРАВЛЕНО: тут был async_for
         async for msg in client.get_chat_history(bot_chat, limit=1):
             if msg.reply_markup:
                 for row in msg.reply_markup.inline_keyboard:
@@ -114,43 +112,41 @@ async def manual_farm_logic(client, acc_id):
 
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
 async def handle_bot_messages(client, message):
+    # 1. Проверяем, что сообщение пришло именно от нужного бота (без учета регистра)
     if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
         return
 
+    # 2. Игнорируем сообщения, которые отправили мы сами
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
         
     if not message.text: return
     text = message.text.lower()
     
-    if "предложение обмена" in text or "пришло предложение" in text:
-        is_from_farm = False
-        for uname in my_usernames:
-            if uname in text:
-                is_from_farm = True
-                break
-
-        if is_from_farm:
-            try: acc_id = clients.index(client) + 1
-            except: acc_id = "Х"
-                
-            print(f"🤝 [Акк {acc_id}] Обнаружен внутренний обмен! Нажимаю Принять...", flush=True)
-            await asyncio.sleep(2) 
+    # 3. МАКСИМАЛЬНОШИРОКИЙ ТРИГГЕР: Ловим любое упоминание обмена с кнопками
+    if "обмен" in text or "предложение" in text or "trade" in text:
+        try: acc_id = clients.index(client) + 1
+        except: acc_id = "Х"
             
-            try:
-                if message.reply_markup:
-                    for row in message.reply_markup.inline_keyboard:
-                        for btn in row:
-                            text_btn = btn.text.lower()
-                            data_btn = (btn.callback_data or "").lower()
-                            
-                            if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
-                                await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
-                                print(f"✅ [Акк {acc_id}] Входящий трейд успешно принят! Запускаю заполнение...", flush=True)
-                                asyncio.create_task(receiver_trade_logic(client, acc_id))
-                                return
-            except Exception as e:
-                print(f"❌ Не удалось нажать Принять на акке {acc_id}: {e}", flush=True)
+        # Если в сообщении есть инлайн-кнопки
+        if message.reply_markup:
+            for row in message.reply_markup.inline_keyboard:
+                for btn in row:
+                    text_btn = btn.text.lower()
+                    data_btn = (btn.callback_data or "").lower()
+                    
+                    # Ищем кнопку принятия трейда
+                    if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
+                        print(f"🤝 [Акк {acc_id}] Вижу кнопку принятия обмена! Нажимаю...", flush=True)
+                        await asyncio.sleep(1.5) # Небольшая пауза для имитации человека
+                        
+                        try:
+                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
+                            print(f"✅ [Акк {acc_id}] Трейд принят! Перехожу к наполнению предметами...", flush=True)
+                            asyncio.create_task(receiver_trade_logic(client, acc_id))
+                            return
+                        except Exception as e:
+                            print(f"❌ Ошибка отправки клика 'Принять' на акке {acc_id}: {e}", flush=True)
 
 # --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
 async def handle_my_messages(client, message):
@@ -205,8 +201,8 @@ async def handle_my_messages(client, message):
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
         
-        if target.lower() in my_usernames or target in my_usernames:
-            asyncio.create_task(sender_confirm_logic(client, acc_id))
+        # Запускаем таймер ожидания подтверждения для отправителя
+        asyncio.create_task(sender_confirm_logic(client, acc_id))
 
 # --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
 async def bg_tasks(client, acc_id):
@@ -227,7 +223,6 @@ async def bg_tasks(client, acc_id):
                 if now.hour == 21 and now.minute <= 25:
                     await client.send_message(bot_chat, "/tfarm")
                     await asyncio.sleep(10)
-                    # ИСПРАВЛЕНО: тут был async_for
                     async for msg in client.get_chat_history(bot_chat, limit=1):
                         if msg.reply_markup:
                             for row in msg.reply_markup.inline_keyboard:
@@ -276,7 +271,6 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ [Ошибка] Аккаунт {acc_num} не запущен: {e}", flush=True)
 
-    print(f"💎 База своих аккаунтов для авто-трейда: {my_usernames}", flush=True)
     print(f"💎 Юзербот запущен. Активных сессий: {len(clients)} из {len(raw_clients)}", flush=True)
     
     while True:
