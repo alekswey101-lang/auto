@@ -20,9 +20,6 @@ ROULETTE_BOT = "phonegetroulettebot"
 MSK = datetime.timezone(datetime.timedelta(hours=3))
 
 clients = []
-my_usernames = set()  
-
-# Настройки глобального состояния для КАЖДОГО аккаунта (динамически создаются при старте)
 account_states = {}
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
@@ -37,10 +34,6 @@ def parse_time(text):
         elif "сек" in unit: s = val
     return d*86400 + h*3600 + m*60 + s
 
-def extract_price(text):
-    x = re.search(r"Цена:\s*([\d,]+)", text)
-    return int(x.group(1).replace(",", "")) if x else None
-
 async def delay(a=0.8, b=2.2):
     await asyncio.sleep(random.uniform(a, b))
 
@@ -52,18 +45,23 @@ def allow_action(acc_id, min_delay=2):
     st["last_action_time"] = now_time
     return True
 
-# --- УМНЫЙ КЛИКЕР ПО КНОПКАМ ПО ИМЕНИ ---
+# --- ОБНОВЛЕННЫЙ БРОНЕБОЙНОЕ КЛИКЕР ---
 async def click(client, msg, name):
     if not getattr(msg, "reply_markup", None) or not getattr(msg.reply_markup, "inline_keyboard", None):
         return False
-    for row in msg.reply_markup.inline_keyboard:
-        for btn in row:
-            if getattr(btn, "text", "") and name.lower() in btn.text.lower() and getattr(btn, "callback_data", None):
+    
+    for row_idx, row in enumerate(msg.reply_markup.inline_keyboard):
+        for col_idx, btn in enumerate(row):
+            btn_text = getattr(btn, "text", "")
+            
+            if btn_text and name.lower() in btn_text.lower():
                 try:
-                    await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
-                    await delay()
+                    # Нажатие теперь ПОЛНОСТЬЮ АКТИВНО (решетки убраны)
+                    await msg.click(row_idx, col_idx)
+                    await delay(1.0, 2.0)
                     return True
-                except:
+                except Exception as e:
+                    print(f"❌ Ошибка физического клика по '{btn_text}': {e}", flush=True)
                     return False
     return False
 
@@ -82,7 +80,7 @@ async def tcard_loop(client, acc_id):
     st = account_states[acc_id]
     while True:
         if st["running"] and "tcard" not in st["timers"]:
-            st["timers"]["tcard"] = 120  # Временный защитный таймер
+            st["timers"]["tcard"] = 120  
             try: await client.send_message(TRADE_BOT, "ткарточка")
             except: pass
         await asyncio.sleep(15)
@@ -97,20 +95,10 @@ async def container_loop(client, acc_id):
             except: st["locks"]["containers"] = False
         await asyncio.sleep(8)
 
-async def avito_loop(client, acc_id):
-    st = account_states[acc_id]
-    while True:
-        if st["running"] and "avito" not in st["timers"]:
-            st["timers"]["avito"] = 15
-            try: await client.send_message(TRADE_BOT, "Авито")
-            except: pass
-        await asyncio.sleep(2)
-
 async def daily_loop(client, acc_id):
     done = False
     while True:
         n = datetime.datetime.now(MSK)
-        # Все аккаунты собирают награду ровно в 01:00 ночи по МСК
         if n.hour == 1 and n.minute == 0 and not done:
             try:
                 await client.send_message(TRADE_BOT, "Тмайнинг")
@@ -126,9 +114,8 @@ async def daily_loop(client, acc_id):
             done = False
         await asyncio.sleep(30)
 
-# --- ИСПРАВЛЕННЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ОТ БОТОВ ---
+# --- ОБРАБОТЧИК СООБЩЕНИЙ ОТ БОТОВ ---
 async def handle_bot_messages(client, msg):
-    # Железно отсекаем свои же сообщения
     if msg.from_user and msg.from_user.id == getattr(client, "me_id", 0):
         return
 
@@ -138,9 +125,9 @@ async def handle_bot_messages(client, msg):
     st = account_states[acc_id]
     text = (msg.text or msg.caption or "").lower()
 
-    # Считывание точного кулдауна на карточки
+    # Таймеры карточек
     if "вам выпал" in text or "карта" in text:
-        st["timers"]["tcard"] = 7200  # Ждем 2 часа
+        st["timers"]["tcard"] = 7200  
     elif "через" in text and hasattr(msg, "reply_to_message") and msg.reply_to_message:
         if "ткарточка" in (msg.reply_to_message.text or "").lower():
             sec = parse_time(text)
@@ -163,31 +150,17 @@ async def handle_bot_messages(client, msg):
             st["locks"]["containers"] = False
             st["timers"]["containers"] = 15
 
-    # Логика Авто-Авито (Выкуп дешевых телефонов)
-    price = extract_price(text)
-    if price and ("объявление" in text or "авито" in text):
-        st["timers"]["avito"] = 10
-        # Если цена телефона меньше лимита для текущего режима выкупа
-        if price <= st["limits"][st["avito_mode"]] and allow_action(acc_id, 1.5):
-            print(f"💰 [Акк {acc_id}] Нашел телефон на Авито за {price}! Покупаю...", flush=True)
-            await click(client, msg, "купить")
-            await click(client, msg, "подтвердить")
-            st["timers"]["avito"] = 15
-        elif allow_action(acc_id, 2.5):
-            # Либо листаем дальше, если телефон слишком дорогой
-            for btn in ["обновить", "далее", "➡️", "след"]:
-                if await click(client, msg, btn): break
-
     # --- БРОНЕБОЙНОЕ АВТО-ПРИНЯТИЕ ТРЕЙДА ---
     if "предложение обмена" in text or "вам пришло предложение" in text:
         print(f"📩 [Акк {acc_id}] Обнаружено уведомление о трейде! Пробую принять...", flush=True)
         await delay(1.0, 2.0)
         
-        # Ищем кнопку по тексту "принять", игнорируя эмодзи ✅ вокруг нее
+        # Ищем кнопку по тексту "принять", включая вариант с эмодзи
         for name_variant in ["принять", "✅ принять"]:
             if await click(client, msg, name_variant):
                 print(f"🤝 [Акк {acc_id}] Успешно нажал кнопку ПРИНЯТЬ!", flush=True)
                 return
+        print(f"⚠️ [Акк {acc_id}] Кнопка принять не была нажата.", flush=True)
         return
             
     elif "готовность: ❌" in text and "✅" in text:
@@ -199,7 +172,7 @@ async def handle_bot_messages(client, msg):
         await delay(1.0, 2.0)
         for confirm_variant in ["подтвердить", "подтверждаю"]:
             if await click(client, msg, confirm_variant):
-                print(f"🎉 [Акк {acc_id}] Трейд успешно подтвержден автоматикой!", flush=True)
+                print(f"🎉 [Акк {acc_id}] Трейд успешно завершен автоматикой!", flush=True)
                 return
 
 # --- ТЕКСТОВЫЕ КОМАНДЫ ДЛЯ ТЕБЯ ---
@@ -225,21 +198,10 @@ async def handle_my_messages(client, msg):
         except: pass
         return
 
-    if text.startswith(".mode "):
-        mode = text.split(".mode ")[1].strip()
-        if mode in st["limits"]:
-            st["avito_mode"] = mode
-            try: await msg.edit(f"⚙️ **[Акк {acc_id}] Режим Авито переключен на: {mode.upper()}**")
-            except: pass
-        else:
-            try: await msg.edit(f"❌ Неверный режим. Доступны: `phantom`, `artifact`, `platinum`")
-            except: pass
-        return
-
-# --- ОДНОВРЕМЕННЫЙ СЕЙФ-ЗАПУСК ВСЕХ 5 СЕССИЙ ---
+# --- ОДНОВРЕМЕННЫЙ ЗАПУСК ВСЕХ 5 СЕССИЙ ---
 async def start_bot():
-    global clients, my_usernames
-    print("🛠 Инициализация Pyrofork клиентов фермы...", flush=True)
+    global clients
+    print("🛠 Инициализация клиентов фермы...", flush=True)
     
     raw_clients = []
     for i, session in enumerate(SESSIONS):
@@ -254,47 +216,39 @@ async def start_bot():
             in_memory=True
         )
         
-        # Регистрация наших безопасных хэндлеров
         c.add_handler(handlers.MessageHandler(handle_my_messages))
         c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat([TRADE_BOT, ROULETTE_BOT])))
         raw_clients.append((i+1, c))
 
     for acc_num, c in raw_clients:
         try:
-            # Анти-краш пауза для Render (ошибка 134)
-            await asyncio.sleep(3.5)
+            await asyncio.sleep(3.5) # Пауза защиты против краша сессий
             
             await c.start()
             clients.append(c)
             
             me = await c.get_me()
             c.me_id = me.id 
-            if me.username:
-                my_usernames.add(me.username.lower())
                 
-            # Инициализируем персональные независимые настройки для аккаунта
             account_states[acc_num] = {
                 "timers": {},
                 "running": True,
                 "locks": {"containers": False},
-                "limits": {"phantom": 7000000, "artifact": 550000, "platinum": 300000},
-                "avito_mode": "phantom",
                 "last_action_time": 0
             }
             
-            print(f"✅ Аккаунт {acc_num} запущен! (@{me.username} | ID: {me.id})", flush=True)
+            print(f"✅ Аккаунт {acc_num} запущен! (@{me.username or 'NoUsername'} | ID: {me.id})", flush=True)
             
-            # Запуск независимых фоновых задач для этого аккаунта
+            # Фоновые циклы (Авито полностью удалено отсюда)
             asyncio.create_task(timer_loop(acc_num))
             asyncio.create_task(tcard_loop(c, acc_num))
             asyncio.create_task(container_loop(c, acc_num))
-            #asyncio.create_task(avito_loop(c, acc_num))
             asyncio.create_task(daily_loop(c, acc_num))
             
         except Exception as e:
             print(f"⚠️ [Ошибка] Сессия {acc_num} не запустилась: {e}", flush=True)
 
-    print(f"💎 Все аккаунты фермы в сети! Юзернеймы для авто-трейда: {my_usernames}", flush=True)
+    print(f"💎 Все доступные аккаунты фермы в сети!", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
