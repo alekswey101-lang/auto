@@ -38,6 +38,9 @@ MSK = timezone(timedelta(hours=3))
 clients = []
 account_states = {}
 
+# Глобальная очередь для поочередной отправки трейдов
+trade_queue = asyncio.Queue()
+
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def parse_time(text):
     text = text.replace("\n", " ").lower()
@@ -79,6 +82,23 @@ async def click(msg, name):
                     return False
     return False
 
+# --- ВОРКЕР ОЧЕРЕДИ ТРЕЙДОВ (ИНТЕРВАЛ 2 МИНУТЫ) ---
+async def trade_queue_worker():
+    while True:
+        # Ждем, пока кто-то появится в очереди
+        client, acc_id, count = await trade_queue.get()
+        print(f"⏳ [Очередь] Наступил черед Аккаунта {acc_id}. Отправляю трейд основы...", flush=True)
+        
+        try:
+            await client.send_message(TRADE_BOT, f"/trade {MAIN_ACC_ID}")
+            print(f"🚀 [Акк {acc_id}] Успешно кинул трейд основе! Ждем 2 минуты перед следующим...", flush=True)
+        except Exception as e:
+            print(f"❌ [Акк {acc_id}] Ошибка вызова трейда: {e}", flush=True)
+            
+        # Железная пауза в 2 минуты (120 секунд) между трейдами разных аккаунтов
+        await asyncio.sleep(120)
+        trade_queue.task_done()
+
 # --- ФОНОВЫЕ ЦИКЛЫ ДЛЯ КАЖДОГО АККАУНТА ---
 
 async def timer_loop(acc_id):
@@ -93,20 +113,18 @@ async def timer_loop(acc_id):
 async def tcard_loop(client, acc_id):
     st = account_states[acc_id]
     while True:
-        # Пишет ткарточка раз в 2 часа (7200 сек), если нет кулдауна
         if st["running"] and "tcard" not in st["timers"]:
-            st["timers"]["tcard"] = 7200  # Ставим КД 2 часа
+            st["timers"]["tcard"] = 7200  # КД 2 часа
             try: 
                 print(f"🃏 [Акк {acc_id}] Отправляю команду 'ткарточка'", flush=True)
                 await client.send_message(TRADE_BOT, "ткарточка")
                 await delay(2.0, 4.0)
                 
-                # Сразу после ткарточки пишем "такк"
                 print(f"📊 [Акк {acc_id}] Отправляю команду 'такк' для проверки коллекции", flush=True)
                 await client.send_message(TRADE_BOT, "такк")
             except Exception as e: 
                 print(f"⚠️ [Акк {acc_id}] Ошибка отправки ткарточки/такк: {e}", flush=True)
-                st["timers"]["tcard"] = 60  # Перепроверить через минуту в случае сбоя
+                st["timers"]["tcard"] = 60
         await asyncio.sleep(15)
 
 async def container_loop(client, acc_id):
@@ -148,18 +166,17 @@ async def handle_messages(client, msg):
     st = account_states[acc_id]
     text = (msg.text or msg.caption or "").lower()
     
-    # 1. Проверка коллекции через "такк" (Сканируем сообщения с фото и текстом)
+    # 1. Проверка коллекции через "такк"
     if msg.photo and text and "телефонов в коллекции:" in text:
         match = re.search(r"телефонов в коллекции:\s*(\d+)", text)
         if match:
             count = int(match.group(1))
             print(f"📱 [Акк {acc_id}] Телефонов в коллекции: {count}", flush=True)
             if count >= 50:
-                print(f"🚨 [Акк {acc_id}] Инвентарь забит ({count} шт)! Инициирую авто-слив на основу...", flush=True)
-                try: await client.send_message(TRADE_BOT, f"/trade {MAIN_ACC_ID}")
-                except Exception as e: print(f"❌ Ошибка вызова трейда: {e}", flush=True)
+                print(f"📥 [Акк {acc_id}] Инвентарь забит ({count} шт)! Встаю в очередь на обмен...", flush=True)
+                await trade_queue.put((client, acc_id, count))
 
-    # 2. Обработка кулдауна ткарточки, если взяли руками или выпала раньше
+    # 2. Обработка кулдауна ткарточки
     if "вам выпал" in text or "карта" in text:
         st["timers"]["tcard"] = 7200
     elif "через" in text and hasattr(msg, "reply_to_message") and msg.reply_to_message:
@@ -184,7 +201,7 @@ async def handle_messages(client, msg):
             st["locks"]["containers"] = False
             st["timers"]["containers"] = 15
 
-    # 4. БРОНЕБОЙНОЕ АВТО-ПРИНЯТИЕ ТРЕЙДА
+    # 4. БРОНЕБОЙНОЕ АВТО-ПРИНЯТИЕ ТРЕЙДА И КОНТРОЛЬ СЛОТОВ
     if "предложение обмена" in text or "вам пришло предложение" in text:
         print(f"📩 [Акк {acc_id}] Обнаружен входящий трейд! Пробую принять...", flush=True)
         await delay(1.0, 2.0)
@@ -194,8 +211,10 @@ async def handle_messages(client, msg):
                 return
         return
             
-    elif "готовность: ❌" in text and "✅" in text:
-        await delay(1.5, 3.0)
+    # Нажимает "ГОТОВ" только когда слоты забиты на 10/10
+    elif "занято слотов: 10/10" in text or ("готовность: ❌" in text and "✅" in text):
+        print(f"⚡ [Акк {acc_id}] Условия для готовности выполнены (Слоты 10/10). Нажимаю ГОТОВ...", flush=True)
+        await delay(1.0, 2.0)
         if await click(msg, "готов"):
             print(f"👍 [Акк {acc_id}] Нажал кнопку ГОТОВ!", flush=True)
         
@@ -226,7 +245,10 @@ async def console():
 # --- ГЛАВНЫЙ ЗАПУСК СИСТЕМЫ ---
 async def main():
     global clients
-    print("🛠 Запуск объединенной фермы из 5 аккаунтов...", flush=True)
+    print("🛠 Запуск продвинутой фермы (Поочередные трейды + Слоты 10/10)...", flush=True)
+    
+    # Запускаем фоновый воркер для контроля очереди трейдов
+    asyncio.create_task(trade_queue_worker())
     
     raw_clients = []
     for i, session in enumerate(SESSIONS):
@@ -249,7 +271,7 @@ async def main():
 
     for acc_num, c in raw_clients:
         try:
-            await asyncio.sleep(3.0)  # Защита от флудвейта
+            await asyncio.sleep(3.0)
             await c.start()
             clients.append(c)
             
@@ -265,7 +287,6 @@ async def main():
             
             print(f"✅ Аккаунт {acc_num} успешно запущен: @{me.username or 'NoUsername'}", flush=True)
             
-            # Включаем циклы задач
             asyncio.create_task(timer_loop(acc_num))
             asyncio.create_task(tcard_loop(c, acc_num))
             asyncio.create_task(container_loop(c, acc_num))
@@ -281,4 +302,4 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
-            
+                        
