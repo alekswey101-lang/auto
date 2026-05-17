@@ -41,7 +41,6 @@ async def delay(min_s: float, max_s: float):
     await asyncio.sleep(random.uniform(min_s, max_s))
 
 async def click(client, message, keyword: str) -> bool:
-    """Ищет кнопку в конкретном сообщении и нажимает её."""
     try:
         if not message.reply_markup:
             return False
@@ -66,7 +65,6 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
     for attempt in range(15):
         await asyncio.sleep(1.5)
         try:
-            # Берём строго САМОЕ СВЕЖЕЕ сообщение из чата бота
             async for msg in client.get_chat_history(bot_chat, limit=1):
                 if not msg.reply_markup:
                     continue
@@ -74,9 +72,10 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
                 # Создаем отпечаток текущих кнопок
                 fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
                 
-                # Если меню еще не обновилось (кнопки те же, что были на прошлом шаге), ждем следующей попытки
-                if last_fp and fp == last_fp:
-                    continue
+                # Если это не шаг "Добавить телефон", то проверяем, обновился ли экран бота
+                if "Добавить телефон" not in step_name:
+                    if last_fp and fp == last_fp:
+                        continue
 
                 print(f"⏳ [{step_name}] Попытка {attempt+1}/15. Вижу на экране кнопки: {[btn.text for row in msg.reply_markup.inline_keyboard for btn in row]}", flush=True)
 
@@ -108,20 +107,22 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
     print(f"🛑 [{step_name}] Не удалось выполнить шаг за 15 попыток.", flush=True)
     return False, last_fp
 
-# --- ПОТОКОВАЯ ЛОГИКА СБОРЩИКА ДЛЯ ПОЛУЧАТЕЛЯ (ЦИКЛ ДО 10 ПРЕДМЕТОВ) ---
+# --- ПОТОКОВАЯ ЛОГИКА СБОРЩИКА ДЛЯ ПОЛУЧАТЕЛЯ (УЛУЧШЕННЫЙ ЦИКЛ x10) ---
 async def receiver_trade_logic(client, acc_id):
     print(f"📦 [Акк {acc_id}] Начинаю сборку 10 предметов в трейд...", flush=True)
-    last_fp = ""
-
-    # Запускаем цикл на 10 итераций для добавления 10 телефонов
+    
+    # Запускаем жесткий цикл на 10 итераций
     for item_index in range(1, 11):
         print(f"📱 [Акк {acc_id}] Добавление телефона {item_index}/10...", flush=True)
+        
+        # Сбрасываем слепок экрана перед началом каждого нового круга, чтобы обойти блокировку повторов
+        last_fp = ""
 
         # Шаг 1: Добавить телефон
         res, last_fp = await execute_menu_step(client, f"Добавить телефон {item_index}", ["добавить телефон", "trade_add_phone"], False, last_fp)
         if not res: 
-            print(f"❌ [Акк {acc_id}] Не удалось нажать 'Добавить телефон' на {item_index} круге. Прерываю.", flush=True)
-            return
+            print(f"❌ [Акк {acc_id}] Не удалось нажать 'Добавить телефон' на {item_index} круге. Пробую финал.", flush=True)
+            break
 
         # Шаг 2: Выбор состояния
         res, last_fp = await execute_menu_step(client, f"Выбор Состояния {item_index}", [], True, last_fp)
@@ -139,16 +140,17 @@ async def receiver_trade_logic(client, acc_id):
         res, last_fp = await execute_menu_step(client, f"Количество 1шт {item_index}", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
         if not res: return
         
-        print(f"✅ [Акк {acc_id}] Телефон {item_index}/10 успешно закинут в трейд.", flush=True)
-        await asyncio.sleep(1) # Короткая пауза перед следующим кругом
+        print(f"✅ [Акк {acc_id}] Телефон {item_index}/10 успешно добавлен. Возвращаюсь в меню...", flush=True)
+        # Небольшой таймаут, чтобы бот успел отрисовать главное меню трейда заново
+        await asyncio.sleep(2.5)
 
-    # Шаг 6: Когда все 10 предметов добавлены, прожимаем финальное подтверждение
-    print(f"⚖️ [Акк {acc_id}] Все 10 телефонов добавлены! Жму финальное подтверждение...", flush=True)
-    res, last_fp = await execute_menu_step(client, "Финал Получателя", ["подтвердить", "trade_confirm"], False, last_fp)
+    # Шаг 6: Финальное подтверждение со стороны твинка (после выхода из цикла)
+    print(f"⚖️ [Акк {acc_id}] Цикл завершен. Жму финальное подтверждение трейда...", flush=True)
+    res, last_fp = await execute_menu_step(client, "Финал Получателя", ["подтвердить", "trade_confirm"], False, "")
     if res:
-        print(f"🎉 [Акк {acc_id}] Трейд полностью укомплектован (10/10) и подтвержден твинком!", flush=True)
+        print(f"🎉 [Акк {acc_id}] Трейд полностью собран (10/10) и подтвержден твинком!", flush=True)
 
-# --- ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ БОТА (ВЫЗЫВАЕТСЯ ИЗ ПУЛИНГА) ---
+# --- ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ БОТА ---
 async def process_bot_logic(client, message, acc_id):
     if not message or not message.text:
         return
@@ -162,14 +164,10 @@ async def process_bot_logic(client, message, acc_id):
 
         print(f"🤝 [Акк {acc_id}] Вижу предложение обмена! Пробую принять...", flush=True)
         await delay(0.5, 1.0)
-        
-        # Нажимаем "Принять"
         await click(client, message, "принять")
+        await asyncio.sleep(2.5)
         
-        # Даем боту 2 секунды, чтобы он выкатил новое сообщение
-        await asyncio.sleep(2)
-        
-        # Запускаем наш цикличный сборщик
+        # Безусловно запускаем наш обновленный цикл
         asyncio.create_task(receiver_trade_logic(client, acc_id))
         return
 
@@ -209,9 +207,9 @@ async def poll_bot_messages(client, acc_id):
 
 # --- ОТПРАВИТЕЛЬ: УВЕЛИЧЕННОЕ ОЖИДАНИЕ И ФИНАЛЬНЫЙ КЛИК ---
 async def sender_confirm_logic(client, acc_id):
-    # Увеличили время ожидания до 85 секунд, так как твинку нужно время прокликать 10 телефонов
-    print(f"⏳ [Акк {acc_id} - Отправитель] Жду 85 секунд, пока твинк собирает 10 предметов...", flush=True)
-    await asyncio.sleep(85)
+    # Основа ждет 110 секунд, чтобы твинк спокойно прогнал все 10 кругов меню
+    print(f"⏳ [Акк {acc_id} - Отправитель] Жду 110 секунд, пока твинк собирает 10 предметов...", flush=True)
+    await asyncio.sleep(110)
     print(f"✍️ [Акк {acc_id} - Отправитель] Время вышло. Подтверждаю трейд со своей стороны...", flush=True)
     try:
         async for msg in client.get_chat_history(bot_chat, limit=1):
@@ -269,7 +267,7 @@ async def bg_tasks(client, acc_id):
 # --- ЗАПУСК КЛИЕНТОВ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск Pyrofork фермы с поддержкой x10 сбора...", flush=True)
+    print("🛠 Запуск Pyrofork фермы (Фикс х10 добавления)...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -302,7 +300,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка старта аккаунта {i+1}: {e}", flush=True)
 
-    print("💎 Скрипт настроен на 10 предметов. Тестируй через .t", flush=True)
+    print("💎 Скрипт полностью обновлен. Запускай трейд через .t", flush=True)
     while True:
         await asyncio.sleep(3600)
 
