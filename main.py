@@ -396,7 +396,8 @@ async def start_bot():
             me = await c.get_me()
             c.me_id = me.id
             # Принудительная синхронизация апдейтов
-            await c.get_dialogs(limit=5)
+            async for _ in c.get_dialogs(limit=5):
+                pass
             if me.first_name:
                 TRUSTED_NAMES.append(me.first_name.lower())
             TRUSTED_NAMES.append(str(me.id))
