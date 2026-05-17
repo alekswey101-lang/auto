@@ -33,7 +33,6 @@ except Exception as e:
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 
-# Ищем сессию в любом из возможных ключей на Рендере
 SESSION_STRING = (
     os.environ.get("SESSION") or 
     os.environ.get("SESSION_1") or 
@@ -45,7 +44,6 @@ SESSION_STRING = (
 
 if not all([API_ID, API_HASH, SESSION_STRING]):
     print("❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют переменные окружения на Render!", flush=True)
-    print(f"Статус: API_ID={'ОК' if API_ID else 'НЕТ'}, API_HASH={'ОК' if API_HASH else 'НЕТ'}, SESSION={'ОК' if SESSION_STRING else 'НЕТ'}", flush=True)
     sys.exit(1)
 
 try:
@@ -73,18 +71,13 @@ ACC_MACROS = {
     "5": "ivannomor"
 }
 
-# Безопасное создание клиента Pyrogram в ОЗУ
-try:
-    app = Client(
-        name="render_session",
-        api_id=API_ID,
-        api_hash=API_HASH,
-        session_string=SESSION_STRING,
-        in_memory=True
-    )
-except Exception as e:
-    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ СОЗДАНИИ КЛИЕНТА: {e}", flush=True)
-    sys.exit(1)
+app = Client(
+    name="render_session",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=SESSION_STRING,
+    in_memory=True
+)
 
 def now():
     return asyncio.get_event_loop().time()
@@ -199,7 +192,6 @@ async def process_bot_logic(msg):
             state["locks"]["containers"] = False
             state["timers"]["containers"] = 15
 
-    # Логика трейдов
     if "предложение обмена" in text or "пришло предложение" in text:
         print("🤝 Обнаружен трейд, принимаю...", flush=True)
         await delay(1.0, 2.0)
@@ -219,16 +211,20 @@ async def handle_new_messages(client, msg):
 async def handle_edited_messages(client, msg):
     await process_bot_logic(msg)
 
+# --- ФИКСИРОВАННЫЙ БЛОК КОМАНДЫ .t (РАБОТАЕТ ВЕЗДЕ) ---
 @app.on_message(filters.me & filters.command(["t", "trade", "т"], prefixes=["."]))
 async def handle_my_trade_commands(client, msg):
     parts = msg.text.split()
     target = None
 
+    # 1. Макросы .t 1, .t 2 и т.д.
     if len(parts) == 2 and parts[1] in ACC_MACROS:
         target = ACC_MACROS[parts[1]]
+    # 2. Репли (ответ на сообщение)
     elif msg.reply_to_message and msg.reply_to_message.from_user:
         user = msg.reply_to_message.from_user
         target = user.username or str(user.id)
+    # 3. Прямой юзернейм типа .t @username
     elif len(parts) >= 2:
         target = parts[1].replace("@", "").strip()
 
@@ -239,9 +235,10 @@ async def handle_my_trade_commands(client, msg):
     except: pass
 
     bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
+    
+    # Отправляем команду СТРОГО в чат к TRADE_BOT, даже если написали её в другом месте
     await client.send_message(TRADE_BOT, bot_cmd)
 
-# Главная точка входа
 async def main():
     try:
         await app.start()
