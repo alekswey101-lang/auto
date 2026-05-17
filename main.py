@@ -310,8 +310,8 @@ async def start_bot():
         )
 
         c.add_handler(handlers.MessageHandler(handle_my_messages))
-        c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat)))
-        c.add_handler(handlers.EditedMessageHandler(handle_bot_edited_messages, filters.chat(bot_chat)))
+        c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat) & filters.private))
+        c.add_handler(handlers.EditedMessageHandler(handle_bot_edited_messages, filters.chat(bot_chat) & filters.private))
 
         raw_clients.append((i + 1, c))
 
