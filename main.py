@@ -149,8 +149,17 @@ async def manual_farm_logic(client, acc_id, mode="Ручной"):
 
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
 async def process_bot_logic(client, message):
+    try:
+        acc_id = clients.index(client) + 1
+    except:
+        acc_id = "Х"
+
+    # ДЕБАГ — ВСЕ входящие сообщения без исключения
+    chat_info = f"{getattr(message.chat, 'username', None)} | id={getattr(message.chat, 'id', None)}"
+    print(f"[ALL MSG] Акк {acc_id} | чат: {chat_info} | текст: '{(message.text or '')[:80]}'", flush=True)
+
     if not message.chat or not message.chat.username:
-        print(f"[DEBUG] Сообщение без чата/юзернейма, пропускаю.", flush=True)
+        print(f"[DEBUG] Акк {acc_id} | Нет чата/юзернейма, пропускаю.", flush=True)
         return
     if message.chat.username.lower() != bot_chat.lower():
         return
@@ -161,10 +170,49 @@ async def process_bot_logic(client, message):
 
     text = message.text.lower()
 
-    try:
-        acc_id = clients.index(client) + 1
-    except:
-        acc_id = "Х"
+    # ДЕБАГ — каждое сообщение от бота
+    print(f"[DEBUG] Акк {acc_id} | markup: {bool(message.reply_markup)} | текст: '{message.text[:120]}'", flush=True)
+
+    # 1. ВХОДЯЩИЙ ТРЕЙД
+    if "предложение обмена" in text or "пришло предложение" in text:
+        print(f"[DEBUG] Акк {acc_id} | Триггер трейда сработал!", flush=True)
+        print(f"[DEBUG] Акк {acc_id} | TRUSTED_NAMES: {TRUSTED_NAMES}", flush=True)
+
+        is_trusted = any(name in text for name in TRUSTED_NAMES)
+        print(f"[DEBUG] Акк {acc_id} | is_trusted: {is_trusted}", flush=True)
+
+        if not is_trusted:
+            print(f"🙅 [Акк {acc_id}] Фильтр отклонил трейд. Полный текст: '{message.text}'", flush=True)
+            return
+
+        print(f"🤝 [Акк {acc_id}] Трейд от своей фермы! Принимаю...", flush=True)
+        await delay(1.0, 2.0)
+        if await click(client, message, "принять"):
+            print(f"✅ [Акк {acc_id}] Принято! Запускаю receiver_trade_logic...", flush=True)
+            asyncio.create_task(receiver_trade_logic(client, acc_id))
+        else:
+            print(f"⚠️ [Акк {acc_id}] Кнопка 'Принять' не найдена!", flush=True)
+        return
+
+    # 2. АВТОГОТОВНОСТЬ
+    if "готовность:" in text and "❌" in text and "✅" in text:
+        print(f"[DEBUG] Акк {acc_id} | Триггер ГОТОВНОСТИ сработал!", flush=True)
+        await delay(1.5, 3.0)
+        if await click(client, message, "готов"):
+            print(f"✅ [Акк {acc_id}] Нажал ГОТОВ.", flush=True)
+        else:
+            print(f"⚠️ [Акк {acc_id}] Кнопка 'Готов' не найдена!", flush=True)
+        return
+
+    # 3. АВТОПОДТВЕРЖДЕНИЕ
+    if "подтвердите обмен" in text or "подтвердите" in text:
+        print(f"[DEBUG] Акк {acc_id} | Триггер ПОДТВЕРЖДЕНИЯ сработал!", flush=True)
+        await delay(1.0, 2.0)
+        if await click(client, message, "подтвердить"):
+            print(f"🎉 [Акк {acc_id}] Обмен подтверждён!", flush=True)
+        else:
+            print(f"⚠️ [Акк {acc_id}] Кнопка 'Подтвердить' не найдена!", flush=True)
+        return
 
     # === ДЕБАГ: каждое сообщение от бота ===
     print(f"[DEBUG] Акк {acc_id} | markup: {bool(message.reply_markup)} | текст: '{message.text[:120]}'", flush=True)
@@ -310,9 +358,9 @@ async def start_bot():
         )
 
         c.add_handler(handlers.MessageHandler(handle_my_messages))
-        c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.chat(bot_chat) & filters.private))
-        c.add_handler(handlers.EditedMessageHandler(handle_bot_edited_messages, filters.chat(bot_chat) & filters.private))
-
+        c.add_handler(handlers.MessageHandler(handle_bot_messages))
+        c.add_handler(handlers.EditedMessageHandler(handle_bot_edited_messages))
+        
         raw_clients.append((i + 1, c))
 
     for acc_num, c in raw_clients:
