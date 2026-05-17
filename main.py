@@ -366,7 +366,7 @@ async def poll_bot_messages(client, acc_id):
                 break
         except Exception as e:
             print(f"❌ [Акк {acc_id}] Ошибка polling: {e}", flush=True)
-        await asyncio.sleep(1)
+        await asyncio.sleep(5)
 
 # --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
 async def bg_tasks(client, acc_id):
@@ -434,6 +434,7 @@ async def start_bot():
             print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | Имя: {me.first_name})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
             asyncio.create_task(poll_bot_messages(c, acc_num))
+            await asyncio.sleep(2)
         except Exception as e:
             print(f"⚠️ [Ошибка] Аккаунт {acc_num} не запущен: {e}", flush=True)
 
