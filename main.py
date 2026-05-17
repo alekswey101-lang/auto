@@ -348,6 +348,26 @@ async def handle_my_messages(client, message):
         if target.lower() in TRUSTED_NAMES:
             asyncio.create_task(sender_confirm_logic(client, acc_id))
 
+# --- POLLING ЛИЧНЫХ СООБЩЕНИЙ ОТ БОТА ---
+async def poll_bot_messages(client, acc_id):
+    last_msg_id = 0
+    print(f"🔄 [Акк {acc_id}] Запущен polling сообщений от бота...", flush=True)
+    while True:
+        try:
+            async for msg in client.get_chat_history(bot_chat, limit=3):
+                if msg.id <= last_msg_id:
+                    break
+                if last_msg_id == 0:
+                    last_msg_id = msg.id
+                    break
+                print(f"[POLL] Акк {acc_id} | Новое сообщение id={msg.id}: '{(msg.text or '')[:80]}'", flush=True)
+                last_msg_id = msg.id
+                await process_bot_logic(client, msg)
+                break
+        except Exception as e:
+            print(f"❌ [Акк {acc_id}] Ошибка polling: {e}", flush=True)
+        await asyncio.sleep(3)
+
 # --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
 async def bg_tasks(client, acc_id):
     print(f"🟢 [Акк {acc_id}] Цикл отправки карточек запущен!", flush=True)
@@ -413,6 +433,7 @@ async def start_bot():
             TRUSTED_NAMES.append(str(me.id))
             print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | Имя: {me.first_name})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
+            asyncio.create_task(poll_bot_messages(c, acc_num))
         except Exception as e:
             print(f"⚠️ [Ошибка] Аккаунт {acc_num} не запущен: {e}", flush=True)
 
