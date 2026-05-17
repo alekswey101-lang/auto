@@ -36,22 +36,31 @@ async def delay(min_s: float, max_s: float):
     await asyncio.sleep(random.uniform(min_s, max_s))
 
 async def click(client, message, keyword: str) -> bool:
-    """Ищет кнопку по ключевому слову и нажимает её."""
-    if not message.reply_markup:
-        print(f"[DEBUG click] ❌ НЕТ reply_markup у сообщения!", flush=True)
-        return False
+    """Ищет кнопку по ключевому слову, перечитывает свежее сообщение и нажимает."""
     try:
-        print(f"[DEBUG click] Ищу кнопку по слову: '{keyword}'", flush=True)
-        for row in message.reply_markup.inline_keyboard:
+        # Перечитываем свежую версию сообщения из истории
+        fresh_msg = None
+        async for m in client.get_chat_history(bot_chat, limit=5):
+            if m.reply_markup:
+                for row in m.reply_markup.inline_keyboard:
+                    for btn in row:
+                        if keyword.lower() in btn.text.lower() or keyword.lower() in (btn.callback_data or "").lower():
+                            fresh_msg = m
+                            break
+                if fresh_msg:
+                    break
+
+        if not fresh_msg:
+            print(f"[DEBUG click] ❌ Кнопка с '{keyword}' не найдена в последних сообщениях.", flush=True)
+            return False
+
+        for row in fresh_msg.reply_markup.inline_keyboard:
             for btn in row:
-                text_l = btn.text.lower()
-                data_l = (btn.callback_data or "").lower()
-                print(f"[DEBUG click] кнопка: '{btn.text}' | data: '{btn.callback_data}'", flush=True)
-                if keyword.lower() in text_l or keyword.lower() in data_l:
-                    await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
+                if keyword.lower() in btn.text.lower() or keyword.lower() in (btn.callback_data or "").lower():
+                    print(f"[DEBUG click] кнопка: '{btn.text}' | data: '{btn.callback_data}'", flush=True)
+                    await client.request_callback_answer(fresh_msg.chat.id, fresh_msg.id, btn.callback_data)
                     print(f"[DEBUG click] ✅ Нажата кнопка: '{btn.text}'", flush=True)
                     return True
-        print(f"[DEBUG click] ❌ Кнопка с '{keyword}' не найдена среди кнопок выше.", flush=True)
     except Exception as e:
         print(f"❌ click() ошибка: {e}", flush=True)
     return False
@@ -180,26 +189,29 @@ async def process_bot_logic(client, message):
     # ДЕБАГ — каждое сообщение от бота
     print(f"[DEBUG] Акк {acc_id} | markup: {bool(message.reply_markup)} | текст: '{message.text[:120]}'", flush=True)
 
-    # 1. ВХОДЯЩИЙ ТРЕЙД
-    if "предложение обмена" in text or "пришло предложение" in text:
-        print(f"[DEBUG] Акк {acc_id} | Триггер трейда сработал!", flush=True)
-        print(f"[DEBUG] Акк {acc_id} | TRUSTED_NAMES: {TRUSTED_NAMES}", flush=True)
-
-        is_trusted = any(name in text for name in TRUSTED_NAMES)
-        print(f"[DEBUG] Акк {acc_id} | is_trusted: {is_trusted}", flush=True)
-
-        if not is_trusted:
-            print(f"🙅 [Акк {acc_id}] Фильтр отклонил трейд. Полный текст: '{message.text}'", flush=True)
-            return
-
-        print(f"🤝 [Акк {acc_id}] Трейд от своей фермы! Принимаю...", flush=True)
-        await delay(1.0, 2.0)
-        if await click(client, message, "принять"):
-            print(f"✅ [Акк {acc_id}] Принято! Запускаю receiver_trade_logic...", flush=True)
-            asyncio.create_task(receiver_trade_logic(client, acc_id))
-        else:
-            print(f"⚠️ [Акк {acc_id}] Кнопка 'Принять' не найдена!", flush=True)
+    # # 1. ВХОДЯЩИЙ ТРЕЙД
+if "предложение обмена" in text or "пришло предложение" in text:
+    if "ваше предложение обмена отправлено" in text:
         return
+
+    print(f"[DEBUG] Акк {acc_id} | Триггер трейда сработал!", flush=True)
+    print(f"[DEBUG] Акк {acc_id} | TRUSTED_NAMES: {TRUSTED_NAMES}", flush=True)
+    is_trusted = any(name in text for name in TRUSTED_NAMES)
+    print(f"[DEBUG] Акк {acc_id} | is_trusted: {is_trusted}", flush=True)
+    
+    if not is_trusted:
+        print(f"🤷‍♂️ [Акк {acc_id}] Фильтр отклонил трейд. Полный текст: '{message.text}'", flush=True)
+        return
+
+    print(f"🤝 [Акк {acc_id}] Трейд от своей фермы! Принимаю...", flush=True)
+    await delay(1.0, 2.0)
+    
+    if await click(client, message, "принять"):
+        print(f"✅ [Акк {acc_id}] Принято! Запускаю receiver_trade_logic...", flush=True)
+        asyncio.create_task(receiver_trade_logic(client, acc_id))
+    else:
+        print(f"⚠️ [Акк {acc_id}] Кнопка 'Принять' не найдена!", flush=True)
+    return
 
    # 2. АВТОГОТОВНОСТЬ
     if "готовность:" in text and "❌" in text and "✅" in text or "занято слотов: 10/10" in text:
