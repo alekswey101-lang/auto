@@ -7,24 +7,33 @@ import os
 import threading
 from datetime import datetime, timezone, timedelta
 from flask import Flask
-from pyrogram import Client, filters
-from pyrogram.errors import FloodWait
 
-# --- ФОНОВЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER (ЗАЩИТА ОТ УБИЙСТВА ПРОЦЕССА) ---
+# Настройка веб-сервера для Render
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def health(): return "OK", 200
 
-threading.Thread(
-    target=lambda: app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), 
-    daemon=True
-).start()
+try:
+    threading.Thread(
+        target=lambda: app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), 
+        daemon=True
+    ).start()
+except Exception as e:
+    print(f"⚠️ Предупреждение Flask: {e}", flush=True)
 
-# --- УМНЫЙ СБОР НАСТРОЕК ИЗ ENVIRONMENT VARIABLES ---
+# Глобальный перехват ошибок импорта Pyrogram
+try:
+    from pyrogram import Client, filters
+    from pyrogram.errors import FloodWait
+except Exception as e:
+    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ИМПОРТА PYROGRAM: {e}", flush=True)
+    sys.exit(1)
+
+# --- БЛОК ИНИЦИАЛИЗАЦИИ И ПРОВЕРКИ ПЕРЕМЕННЫХ ---
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 
-# Перебираем все возможные варианты названия переменной сессии
+# Ищем сессию в любом из возможных ключей на Рендере
 SESSION_STRING = (
     os.environ.get("SESSION") or 
     os.environ.get("SESSION_1") or 
@@ -35,14 +44,14 @@ SESSION_STRING = (
 )
 
 if not all([API_ID, API_HASH, SESSION_STRING]):
-    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Не найдены настройки аккаунта!", flush=True)
-    print(f"Статус на сервере: API_ID={'Задан' if API_ID else 'НЕТ'}, API_HASH={'Задан' if API_HASH else 'НЕТ'}, SESSION={'Задан' if SESSION_STRING else 'НЕТ'}", flush=True)
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют переменные окружения на Render!", flush=True)
+    print(f"Статус: API_ID={'ОК' if API_ID else 'НЕТ'}, API_HASH={'ОК' if API_HASH else 'НЕТ'}, SESSION={'ОК' if SESSION_STRING else 'НЕТ'}", flush=True)
     sys.exit(1)
 
 try:
     API_ID = int(API_ID)
 except ValueError:
-    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная API_ID на Render должна содержать только цифры!", flush=True)
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: API_ID должен состоять только из цифр!", flush=True)
     sys.exit(1)
 
 TRADE_BOT = "phonegetcardsbot"
@@ -56,7 +65,6 @@ state = {
     "last_action_time": 0
 }
 
-# Быстрые макросы для команды .t (1-5)
 ACC_MACROS = {
     "1": "boymorale",
     "2": "tintedwindow",
@@ -65,14 +73,18 @@ ACC_MACROS = {
     "5": "ivannomor"
 }
 
-# Создаем клиент Pyrogram в оперативной памяти (in_memory=True)
-app = Client(
-    name="render_session",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    session_string=SESSION_STRING,
-    in_memory=True
-)
+# Безопасное создание клиента Pyrogram в ОЗУ
+try:
+    app = Client(
+        name="render_session",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        session_string=SESSION_STRING,
+        in_memory=True
+    )
+except Exception as e:
+    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ СОЗДАНИИ КЛИЕНТА: {e}", flush=True)
+    sys.exit(1)
 
 def now():
     return asyncio.get_event_loop().time()
@@ -110,7 +122,7 @@ async def click(msg, name):
                 if target in clean_btn_text or target in btn.text.lower():
                     try:
                         await app.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
-                        print(f"✅ Успешно нажата кнопка: [{btn.text}]", flush=True)
+                        print(f"✅ Нажата кнопка: [{btn.text}]", flush=True)
                         await delay()
                         return True
                     except Exception as e:
@@ -118,7 +130,7 @@ async def click(msg, name):
                         return False
     return False
 
-# --- ИГРОВЫЕ ТАЙМЕРЫ И ЦИКЛЫ ---
+# --- АСИНХРОННЫЕ ЦИКЛЫ АВТОМАТИЗАЦИИ ---
 async def tcard_loop():
     while True:
         if state["running"] and "tcard" not in state["timers"]:
@@ -161,7 +173,6 @@ async def timer_loop():
                 del state["timers"][k]
         await asyncio.sleep(1)
 
-# --- ЛОГИКА АВТОПРИНЯТИЯ И КОНТЕНЕРОВ ---
 async def process_bot_logic(msg):
     text = (msg.text or msg.caption or "").lower()
     
@@ -188,19 +199,15 @@ async def process_bot_logic(msg):
             state["locks"]["containers"] = False
             state["timers"]["containers"] = 15
 
-    # --- УМНЫЙ АВТО-ТРЕЙД ---
+    # Логика трейдов
     if "предложение обмена" in text or "пришло предложение" in text:
-        print("🤝 Обнаружен трейд, нажимаю Принять...", flush=True)
+        print("🤝 Обнаружен трейд, принимаю...", flush=True)
         await delay(1.0, 2.0)
         await click(msg, "принять")
-        
     elif "готовность:" in text or "занято слотов:" in text:
-        print("⏳ Проверяю доступность кнопки Готов...", flush=True)
         await delay(1.5, 2.5)
         await click(msg, "готов")
-        
     elif "подтвердите обмен" in text or "подтвердите" in text:
-        print("🎉 Финальный этап трейда, нажимаю Подтвердить...", flush=True)
         await delay(1.0, 2.0)
         await click(msg, "подтвердить")
 
@@ -212,7 +219,6 @@ async def handle_new_messages(client, msg):
 async def handle_edited_messages(client, msg):
     await process_bot_logic(msg)
 
-# --- ОБРАБОТКА СЛОВЕСНЫХ КОМАНД (.t) ---
 @app.on_message(filters.me & filters.command(["t", "trade", "т"], prefixes=["."]))
 async def handle_my_trade_commands(client, msg):
     parts = msg.text.split()
@@ -235,15 +241,23 @@ async def handle_my_trade_commands(client, msg):
     bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
     await client.send_message(TRADE_BOT, bot_cmd)
 
-# --- ТОЧКА ВХОДА ---
+# Главная точка входа
 async def main():
-    await app.start()
-    print("🚀 Бот успешно авторизовался и запущен на Pyrogram!", flush=True)
-    asyncio.create_task(timer_loop())
-    asyncio.create_task(container_loop())
-    asyncio.create_task(tcard_loop())
-    asyncio.create_task(daily_loop())
-    await asyncio.Event().wait()
+    try:
+        await app.start()
+        print("🚀 Бот успешно авторизовался в Telegram на базе Pyrogram!", flush=True)
+        asyncio.create_task(timer_loop())
+        asyncio.create_task(container_loop())
+        asyncio.create_task(tcard_loop())
+        asyncio.create_task(daily_loop())
+        await asyncio.Event().wait()
+    except Exception as e:
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ СТАРТЕ АСИНХРОННОГО ЦИКЛА: {e}", flush=True)
+        sys.exit(1)
 
 if __name__ == "__main__":
-    app.run(main())
+    try:
+        app.run(main())
+    except Exception as main_err:
+        print(f"❌ КРИТИЧЕСКИЙ СБОЙ В МЕТОДЕ RUN: {main_err}", flush=True)
+        sys.exit(1)
