@@ -72,62 +72,92 @@ async def click(client, message, keyword: str) -> bool:
         print(f"❌ click() ошибка: {e}", flush=True)
     return False
 
-# --- СВЕРХНАДЕЖНЫЙ ДВИЖОК ПОШАГОВЫХ КЛИКОВ ---
+# --- УЛЬТРА-НАДЁЖНЫЙ ДВИЖОК ПОШАГОВЫХ КЛИКОВ (ФИНАЛЬНАЯ ВЕРСИЯ) ---
 async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
-    for attempt in range(12):
+    print(f"🔍 [{step_name}] Начинаю поиск кнопок... Ищу ключевые слова: {keywords}", flush=True)
+    
+    for attempt in range(15):  # 15 попыток с интервалом в 2 секунды
         await asyncio.sleep(2)
         try:
-            # Читаем чуть глубже (limit=3), чтобы не пропускать отредактированные ботом меню
-            async for msg in client.get_chat_history(bot_chat, limit=3):
+            # Читаем строго ПОСЛЕДНЕЕ сообщение, чтобы не собирать мусор из кэша истории
+            async for msg in client.get_chat_history(bot_chat, limit=1):
                 if not msg.reply_markup:
                     continue
 
+                # Генерируем уникальный отпечаток текущего меню кнопок
                 fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
+                
+                # Если бот ещё не обновил меню (кнопки те же, что на прошлом шаге) — ждем
                 if last_fp and fp == last_fp:
                     continue
 
+                # Перебираем инлайн-кнопки
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         text_lower = btn.text.lower().strip()
                         data_lower = (btn.callback_data or "").lower().strip()
 
+                        # Режим 1: Авто-выбор первой доступной кнопки (для выбора редкости, состояния и т.д.)
                         if pick_first:
                             if "назад" not in text_lower and "back" not in data_lower and "изменить" not in text_lower:
-                                await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
-                                print(f"✅ [{step_name}] Авто-выбор первой кнопки: [{btn.text}]", flush=True)
-                                return True, fp
+                                print(f"🎯 [{step_name}] Попытка нажать авто-кнопку: [{btn.text}] (data: {btn.callback_data})", flush=True)
+                                try:
+                                    await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
+                                    print(f"✅ [{step_name}] Успешно нажата авто-кнопка: [{btn.text}]", flush=True)
+                                    return True, fp
+                                except Exception as click_err:
+                                    print(f"❌ [{step_name}] Ошибка клика по авто-кнопке: {click_err}", flush=True)
+
+                        # Режим 2: Поиск конкретной кнопки по ключевым словам
                         else:
                             for kw in keywords:
                                 kw_l = kw.lower().strip()
-                                # Мягкий поиск через 'in' защищает от динамических ID в callback_data
+                                # Мягкая проверка через 'in' обходит любые динамические ID в callback_data
                                 if kw_l in text_lower or kw_l in data_lower:
-                                    await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
-                                    print(f"✅ [{step_name}] Успешно нажата кнопка: [{btn.text}]", flush=True)
-                                    return True, fp
+                                    print(f"🎯 [{step_name}] Найдено совпадение! Кнопка: [{btn.text}] | Данные: {btn.callback_data}", flush=True)
+                                    try:
+                                        await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
+                                        print(f"✅ [{step_name}] Успешный клик по кнопке: [{btn.text}]", flush=True)
+                                        return True, fp
+                                    except Exception as click_err:
+                                        print(f"❌ [{step_name}] Telegram заблокировал клик по кнопке '{btn.text}': {click_err}", flush=True)
+                                        
+            # Раз в 3 попытки выводим в консоль, что сейчас видит юзербот на экране
+            if attempt % 3 == 0:
+                current_fp = fp if 'fp' in locals() else 'Кнопок нет/Чат пуст'
+                print(f"⏳ [{step_name}] Попытка {attempt+1}/15. Нужной кнопки пока нет. Вижу на экране: [{current_fp}]", flush=True)
+                
         except Exception as e:
-            print(f"❌ Ошибка выполнения шага {step_name}: {e}", flush=True)
+            print(f"❌ Системная ошибка на шаге {step_name}: {e}", flush=True)
+            
+    print(f"🛑 [{step_name}] Скрипт сдался после 15 попыток. Шаг не выполнен.", flush=True)
     return False, last_fp
 
 # --- ЛОГИКА ДЛЯ ПОЛУЧАТЕЛЯ ---
 async def receiver_trade_logic(client, acc_id):
     print(f"📦 [Акк {acc_id} - Получатель] Запуск умного сборщика телефонов в трейд...", flush=True)
 
-    # Убран жесткий корень "_start", чтобы ловить любые вариации динамических колбэков бота
+    # 1. Жмем Добавить телефон (ищет по вхождению "trade_add_phone")
     res, last_fp = await execute_menu_step(client, "Кнопка Добавить", ["добавить телефон", "trade_add_phone"], False, "")
     if not res: return
 
+    # 2. Выбираем состояние (первая кнопка)
     res, last_fp = await execute_menu_step(client, "Выбор Состояния", [], True, last_fp)
     if not res: return
 
+    # 3. Выбираем редкость (первая кнопка)
     res, last_fp = await execute_menu_step(client, "Выбор Редкости", [], True, last_fp)
     if not res: return
 
+    # 4. Выбираем модель (первая кнопка)
     res, last_fp = await execute_menu_step(client, "Выбор Модели", [], True, last_fp)
     if not res: return
 
+    # 5. Выбираем количество 1 шт.
     res, last_fp = await execute_menu_step(client, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
     if not res: return
 
+    # 6. Финальное подтверждение со стороны получателя
     res, last_fp = await execute_menu_step(client, "Финал Получателя", ["подтвердить", "trade_confirm"], False, last_fp)
     if res:
         print(f"🎉 [Акк {acc_id} - Получатель] Все этапы пройдены! Трейд укомплектован.", flush=True)
@@ -177,7 +207,6 @@ async def process_bot_logic(client, message):
     if not message or not message.chat or not message.text:
         return
 
-    chat_info = f"{getattr(message.chat, 'username', None)} | id={getattr(message.chat, 'id', None)}"
     chat_username = (getattr(message.chat, 'username', None) or '').lower()
     sender_username = (getattr(message.from_user, 'username', None) or '').lower() if message.from_user else ''
 
@@ -189,20 +218,16 @@ async def process_bot_logic(client, message):
         return
 
     text = message.text.lower()
-    print(f"[DEBUG] Акк {acc_id} | markup: {bool(message.reply_markup)} | текст: '{message.text[:120]}'", flush=True)
 
     # 1. ВХОДЯЩИЙ ТРЕЙД
     if "предложение обмена" in text or "пришло предложение" in text:
         if "ваше предложение обмена отправлено" in text:
             return
 
-        print(f"[DEBUG] Акк {acc_id} | Триггер трейда сработал!", flush=True)
-        print(f"[DEBUG] Акк {acc_id} | TRUSTED_NAMES: {TRUSTED_NAMES}", flush=True)
         is_trusted = any(name in text for name in TRUSTED_NAMES)
-        print(f"[DEBUG] Акк {acc_id} | is_trusted: {is_trusted}", flush=True)
         
         if not is_trusted:
-            print(f"🤷‍♂️ [Акк {acc_id}] Фильтр отклонил трейд. Полный текст: '{message.text}'", flush=True)
+            print(f"🤷‍♂️ [Акк {acc_id}] Фильтр отклонил трейд. Имя отправителя чужое.", flush=True)
             return
 
         print(f"🤝 [Акк {acc_id}] Трейд от своей фермы! Принимаю...", flush=True)
@@ -217,22 +242,16 @@ async def process_bot_logic(client, message):
 
     # 2. АВТОГОТОВНОСТЬ
     if ("готовность:" in text and "❌" in text and "✅" in text) or "занято слотов: 10/10" in text:
-        print(f"[DEBUG] Акк {acc_id} | Триггер ГОТОВНОСТИ сработал!", flush=True)
         await delay(1.5, 3.0)
         if await click(client, message, "готов"):
             print(f"✅ [Акк {acc_id}] Нажал ГОТОВ.", flush=True)
-        else:
-            print(f"⚠️ [Акк {acc_id}] Кнопка 'Готов' не найдена!", flush=True)
         return
 
     # 3. АВТОПОДТВЕРЖДЕНИЕ
     if "подтвердите обмен" in text or "подтвердите" in text:
-        print(f"[DEBUG] Акк {acc_id} | Триггер ПОДТВЕРЖДЕНИЯ сработал!", flush=True)
         await delay(1.0, 2.0)
         if await click(client, message, "подтвердить"):
             print(f"🎉 [Акк {acc_id}] Обмен подтверждён!", flush=True)
-        else:
-            print(f"⚠️ [Акк {acc_id}] Кнопка 'Подтвердить' не найдена!", flush=True)
         return
 
 # --- ОБРАБОТЧИК ТВОИХ КОМАНД (.farmn, .t, .ping) ---
@@ -253,7 +272,7 @@ async def handle_my_messages(client, message):
         acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Pyrofork юзербот полностью активен!**")
+        try: await message.edit("🚀 **Юзербот активен и готов к работе!**")
         except: pass
         return
 
@@ -266,7 +285,6 @@ async def handle_my_messages(client, message):
         return
 
     if cmd in [".trade", ".t", ".т"]:
-        print(f"⚡ [Акк {acc_id}] Поймал команду трейда: '{message.text}'", flush=True)
         target = None
 
         if len(parts) == 2 and parts[1] in ACC_MACROS:
@@ -278,7 +296,6 @@ async def handle_my_messages(client, message):
             target = parts[1].replace("@", "").strip()
 
         if not target:
-            print(f"⚠️ [Акк {acc_id}] Ошибка: не удалось определить цель для обмена!", flush=True)
             return
 
         try: await message.delete()
@@ -302,7 +319,6 @@ async def poll_bot_messages(client, acc_id):
                 current_text = (msg.text or "")
                 if msg.id != last_msg_id or current_text != last_msg_text:
                     if last_msg_id != 0:
-                        print(f"[POLL] Акк {acc_id} | id={msg.id}: '{current_text[:80]}'", flush=True)
                         await process_bot_logic(client, msg)
                     last_msg_id = msg.id
                     last_msg_text = current_text
@@ -347,9 +363,8 @@ async def start_bot():
             in_memory=True,
         )
         
-        # Оставляем хэндлер только для твоих команд из чата (.ping, .t, .farmn)
+        # Обрабатываем хэндлером исключительно исходящие команды от администратора (.t, .farmn, .ping)
         c.add_handler(handlers.MessageHandler(handle_my_messages))
-        
         raw_clients.append((i + 1, c))
         
     for acc_num, c in raw_clients:
@@ -359,7 +374,6 @@ async def start_bot():
             
             try:
                 await c.send_message(bot_chat, "/start")
-                print(f"[Акк {acc_num}] Отправил /start боту для активации апдейтов", flush=True)
             except Exception as ex:
                 print(f"[Акк {acc_num}] Не смог отправить /start: {ex}", flush=True)
 
@@ -371,7 +385,7 @@ async def start_bot():
             if me.first_name:
                 TRUSTED_NAMES.append(me.first_name.lower())
             TRUSTED_NAMES.append(str(me.id))
-            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | Имя: {me.first_name})", flush=True)
+            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
             asyncio.create_task(poll_bot_messages(c, acc_num))
             await asyncio.sleep(2)
