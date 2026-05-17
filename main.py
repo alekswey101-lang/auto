@@ -26,7 +26,8 @@ SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
 clients = []
-current_bot_msg = {}  # Глобальное хранилище самых свежих сообщений бота для каждого аккаунта
+current_bot_msg = {}  # ОЗУ для хранения актуальных сообщений бота
+is_collecting = {}    # Флаг: занят ли аккаунт сборкой предметов прямо сейчас
 
 ACC_MACROS = {
     "1": "boymorale",
@@ -53,24 +54,22 @@ async def click(client, message, keyword: str) -> bool:
         pass
     return False
 
-# --- БЕЗЗАДЕРЖЕЧНЫЙ ДВИЖОК (РАБОТАЕТ ЧЕРЕЗ ОЗУ) ---
+# --- ТУРБО-ДВИЖОК ШАГОВ ---
 async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, last_fp):
-    # Никакого сна на старте. Работаем на опережение.
     for attempt in range(40):
         try:
             msg = current_bot_msg.get(acc_id)
             if not msg or not msg.reply_markup:
-                await asyncio.sleep(0.05) # Микро-пауза 50мс если сообщения еще нет
+                await asyncio.sleep(0.05)
                 continue
 
             fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
             
             if "Добавить телефон" not in step_name:
                 if last_fp and fp == last_fp:
-                    await asyncio.sleep(0.05) # Ждем смену экрана ботом
+                    await asyncio.sleep(0.05)
                     continue
 
-            # Если бот реально затупил на 15-й микро-попытке, пробуем Назад
             if attempt == 20 and pick_first:
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
@@ -99,13 +98,14 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
                                 return True, fp
         except:
             pass
-        await asyncio.sleep(0.05) # Минимальный тик во избежание перегрузки CPU
+        await asyncio.sleep(0.05)
             
     return False, last_fp
 
-# --- ТУРБО СБОРЩИК Х10 (СНАЧАЛА ГОТОВ -> ПОТОМ ПОДТВЕРДИТЬ) ---
+# --- УЛЬТРА СБОРЩИК Х10 ---
 async def receiver_trade_logic(client, acc_id):
-    print(f"⚡ [Акк {acc_id}] Сборка x10 в режиме МАКСИМАЛЬНЫЙ ТУРБО...", flush=True)
+    print(f"⚡ [Акк {acc_id}] Сборщик активирован. Начинаю добавление телефонов...", flush=True)
+    is_collecting[acc_id] = True  # Блокируем фоновое нажатие кнопки "Готов"
     
     for loop_index in range(1, 26):
         slots_full = False
@@ -113,7 +113,7 @@ async def receiver_trade_logic(client, acc_id):
         if msg and msg.text:
             msg_text = msg.text.lower()
             if "10/10" in msg_text and "слот" in msg_text:
-                print(f"🎯 [Акк {acc_id}] Слоты забиты 10/10!", flush=True)
+                print(f"🎯 [Акк {acc_id}] Зафиксировано заполнение 10/10 слотов!", flush=True)
                 slots_full = True
                 break
                 
@@ -123,7 +123,8 @@ async def receiver_trade_logic(client, acc_id):
         last_fp = ""
         # Шаг 1: Добавить телефон
         res, last_fp = await execute_menu_step(client, acc_id, "Добавить телефон", ["добавить телефон", "trade_add_phone"], False, last_fp)
-        if not res: break
+        if not res: 
+            break
 
         # Шаг 2: Выбор состояния
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Состояния", [], True, last_fp)
@@ -141,52 +142,68 @@ async def receiver_trade_logic(client, acc_id):
         res, last_fp = await execute_menu_step(client, acc_id, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
         if not res: continue
 
-    # --- ФИНАЛЬНАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ КЛИКОВ ---
-    print(f"⚖️ [Акк {acc_id}] Предметы собраны. Жму ГОТОВ...", flush=True)
-    
-    # 1. Сначала прожимаем ГОТОВ
-    for _ in range(10):
+    # Сборка окончена, снимаем блокировку
+    is_collecting[acc_id] = False
+
+    # --- СТРОГАЯ ПОСЛЕДОВАТЕЛЬНОСТЬ ФИНАЛА ---
+    print(f"⚖️ [Акк {acc_id}] Предметы добавлены. Прожимаю ГОТОВ...", flush=True)
+    for _ in range(15):
         msg = current_bot_msg.get(acc_id)
         if await click(client, msg, "готов"):
             break
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.15)
 
-    # Даем боту 1 секунду обновиться до статуса готовности
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(0.8)
 
-    # 2. Только ПОСЛЕ этого жмем ПОДТВЕРДИТЬ
-    print(f"🚀 [Акк {acc_id}] Статус готов! Прожимаю ПОДТВЕРДИТЬ для закрытия сделки...", flush=True)
-    for _ in range(10):
+    print(f"🚀 [Акк {acc_id}] Готовность зафиксирована. Прожимаю ПОДТВЕРДИТЬ...", flush=True)
+    for _ in range(15):
         msg = current_bot_msg.get(acc_id)
         if await click(client, msg, "подтвердить"):
             break
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.15)
 
-# --- ЛОГИКА ОБРАБОТКИ СИГНАЛОВ ИЗ ЧАТА ---
+# --- ФОНОВЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ЧАТА ---
 async def process_bot_logic(client, message, acc_id):
     if not message or not message.text:
         return
 
     text = message.text.lower()
 
+    # 1. ПРИНЯТИЕ ОБМЕНА
     if "предложение обмена" in text or "пришло предложение" in text:
         if "ваше предложение обмена отправлено" in text:
             return
 
-        print(f"🤝 [Акк {acc_id}] Обнаружен трейд! Принимаю...", flush=True)
+        print(f"🤝 [Акк {acc_id}] Принимаю входящий трейд...", flush=True)
         await click(client, message, "принять")
+        await asyncio.sleep(0.5)
         asyncio.create_task(receiver_trade_logic(client, acc_id))
         return
 
-    if ("готовность:" in text and "❌" in text and "✅" in text) or "занято слотов: 10/10" in text:
-        await click(client, message, "готов")
-        return
+    # 2. ФОНОВАЯ АВТО-ГОТОВНОСТЬ
+    # Нажимаем готов только если мы НЕ заняты циклом сборки прямо сейчас и слоты полные
+    if not is_collecting.get(acc_id, False):
+        if ("готовность:" in text and "❌" in text) or "занято слотов: 10/10" in text:
+            # Дополнительная проверка: если на экране есть кнопка "Добавить телефон", 
+            # значит собирать еще МОЖНО, фоном "Готов" не жмем!
+            has_add_button = False
+            if message.reply_markup:
+                for row in message.reply_markup.inline_keyboard:
+                    for btn in row:
+                        if "добавить телефон" in btn.text.lower():
+                            has_add_button = True
+            
+            if not has_add_button or "10/10" in text:
+                print(f"⚡ [Акк {acc_id}] Фоновый триггер готовности слотов. Жму Готов...", flush=True)
+                await click(client, message, "готов")
+                return
 
+    # 3. АВТОПОДТВЕРЖДЕНИЕ СДЕЛКИ
     if "подтвердите обмен" in text or "подтвердите" in text:
         await click(client, message, "подтвердить")
         return
 
-# --- УЛЬТРА-СКОРОСТНОЙ ПУЛИНГ (КАЖДЫЕ 0.15 СЕКУНДЫ) ---
+# --- СКОРОСТНОЙ ПУЛИНГ ---
 async def poll_bot_messages(client, acc_id):
     last_msg_id = 0
     last_buttons_fp = ""
@@ -198,7 +215,6 @@ async def poll_bot_messages(client, acc_id):
                 if msg.reply_markup:
                     buttons_fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
                 
-                # Мгновенно пушим актуальное сообщение в ОЗУ для движка
                 current_bot_msg[acc_id] = msg
                 
                 if msg.id != last_msg_id or buttons_fp != last_buttons_fp:
@@ -208,16 +224,15 @@ async def poll_bot_messages(client, acc_id):
                 break
         except:
             pass
-        await asyncio.sleep(0.15) # Идеальный баланс скорости без бана от Telegram за спам-запросы
+        await asyncio.sleep(0.15)
 
 # --- ОТПРАВИТЕЛЬ ---
 async def sender_confirm_logic(client, acc_id):
-    # Срезали таймер до 20 сек, твинк теперь управляется мгновенно
-    await asyncio.sleep(20)
+    await asyncio.sleep(25)
     try:
         async for msg in client.get_chat_history(bot_chat, limit=1):
             await click(client, msg, "готов")
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.8)
             await click(client, msg, "подтвердить")
     except:
         pass
@@ -267,7 +282,7 @@ async def bg_tasks(client, acc_id):
 
 async def start_bot():
     global clients
-    print("🛠 Запуск СВЕРХЗВУКОВОЙ Pyrofork фермы...", flush=True)
+    print("🛠 Запуск Pyrofork фермы с умными блокировками финала...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -290,12 +305,14 @@ async def start_bot():
             c.me_id = me.id
             async for _ in c.get_dialogs(limit=5): pass
             print(f"✅ Аккаунт {i+1} запущен: @{me.username}", flush=True)
+            
+            is_collecting[i+1] = False
             asyncio.create_task(bg_tasks(c, i+1))
             asyncio.create_task(poll_bot_messages(c, i+1))
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт разогнан до предела возможностей. Запускай .t", flush=True)
+    print("🚀 Корректный турбо-режим запущен. Пробуй трейд через .t", flush=True)
     while True:
         await asyncio.sleep(3600)
 
