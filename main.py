@@ -27,9 +27,16 @@ state = {
     "timers": {},
     "running": True,
     "locks": {"containers": False},
-    "limits": {"phantom": 7000000, "artifact": 550000, "platinum": 300000},
-    "avito_mode": "phantom",
     "last_action_time": 0
+}
+
+# Словарь макросов для быстрого вызова обмена
+ACC_MACROS = {
+    "1": "boymorale",
+    "2": "tintedwindow",
+    "3": "cutemald",
+    "4": "dennyom",
+    "5": "ivannomor"
 }
 
 app = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH)
@@ -48,10 +55,6 @@ def parse_time(text):
         elif "сек" in unit: s = val
     return d*86400 + h*3600 + m*60 + s
 
-def extract_price(text):
-    x = re.search(r"Цена:\s*([\d,]+)", text)
-    return int(x.group(1).replace(",", "")) if x else None
-
 async def delay(a=0.8, b=2.2):
     await asyncio.sleep(random.uniform(a,b))
 
@@ -61,7 +64,7 @@ def allow_action(min_delay=2):
     state["last_action_time"] = now()
     return True
 
-# Умный кликер: очищает кнопки от смайликов (крестиков/галочек) перед сравнением текста
+# Умный кликер: очищает кнопки от смайликов перед сравнением текста
 async def click(msg, name):
     if not getattr(msg, "reply_markup", None) or not getattr(msg.reply_markup, "inline_keyboard", None):
         return False
@@ -70,7 +73,6 @@ async def click(msg, name):
     for row in msg.reply_markup.inline_keyboard:
         for btn in row:
             if getattr(btn, "text", "") and getattr(btn, "callback_data", None):
-                # Убираем любые смайлики и лишние пробелы из текста кнопки
                 clean_btn_text = re.sub(r'[^\w\s]', '', btn.text).lower().strip()
                 
                 if target in clean_btn_text or target in btn.text.lower():
@@ -118,14 +120,6 @@ async def container_loop():
             except: state["locks"]["containers"] = False
         await asyncio.sleep(8)
 
-async def avito_loop():
-    while True:
-        if state["running"] and "avito" not in state["timers"]:
-            state["timers"]["avito"] = 15
-            try: await app.send_message(TRADE_BOT, "Авито")
-            except: pass
-        await asyncio.sleep(2)
-
 async def timer_loop():
     while True:
         for k in list(state["timers"]):
@@ -161,17 +155,6 @@ async def process_bot_logic(msg):
             state["locks"]["containers"] = False
             state["timers"]["containers"] = 15
 
-    price = extract_price(text)
-    if price and ("объявление" in text or "авито" in text):
-        state["timers"]["avito"] = 10
-        if price <= state["limits"][state["avito_mode"]] and allow_action(1.5):
-            await click(msg, "купить")
-            await click(msg, "подтвердить")
-            state["timers"]["avito"] = 15
-        elif allow_action(2.5):
-            for btn in ["обновить", "далее", "➡️", "след"]:
-                if await click(msg, btn): break
-
     # --- НАДЕЖНЫЙ БЛОК АВТО-ТРЕЙДА ---
     if "предложение обмена" in text or "пришло предложение" in text:
         print("🤝 Обнаружен трейд, нажимаю Принять...", flush=True)
@@ -179,7 +162,6 @@ async def process_bot_logic(msg):
         await click(msg, "принять")
         
     elif "готовность:" in text or "занято слотов:" in text:
-        # Реагирует на любое изменение статуса готовности в меню обмена
         print("⏳ Проверяю доступность кнопки Готов...", flush=True)
         await delay(1.5, 2.5)
         await click(msg, "готов")
@@ -194,10 +176,42 @@ async def process_bot_logic(msg):
 async def handle_new_messages(client, msg):
     await process_bot_logic(msg)
 
-# Ловим ОБНОВЛЕНИЯ старых сообщений (важно для кнопок Готов и Подтвердить)
+# Ловим ОБНОВЛЕНИЯ сообщений от бота (для кнопок Готов и Подтвердить)
 @app.on_edited_message(filters.chat([TRADE_BOT, ROULETTE_BOT]))
 async def handle_edited_messages(client, msg):
     await process_bot_logic(msg)
+
+# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД (.t) ---
+@app.on_message(filters.me & filters.command(["t", "trade", "т"], prefixes=["."]))
+async def handle_my_trade_commands(client, msg):
+    parts = msg.text.split()
+    target = None
+
+    # 1. Если команда введена как .t 1, .t 2 и т.д.
+    if len(parts) == 2 and parts[1] in ACC_MACROS:
+        target = ACC_MACROS[parts[1]]
+    
+    # 2. Если это ответ на сообщение (.t репли)
+    elif msg.reply_to_message and msg.reply_to_message.from_user:
+        user = msg.reply_to_message.from_user
+        target = user.username or str(user.id)
+    
+    # 3. Если указан юзернейм напрямую (.t @username)
+    elif len(parts) >= 2:
+        target = parts[1].replace("@", "").strip()
+
+    if not target:
+        print("⚠️ Не удалось определить цель для обмена!", flush=True)
+        return
+
+    # Удаляем твою словесную команду
+    try: await msg.delete()
+    except: pass
+
+    # Отправляем официальную команду в чат боту
+    print(f"📣 Инициирую трейд на {target}...", flush=True)
+    bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
+    await client.send_message(TRADE_BOT, bot_cmd)
 
 async def console():
     while True:
@@ -210,20 +224,14 @@ async def console():
             elif cmd == "start":
                 state["running"] = True
                 print("Старт")
-            elif cmd.startswith("change"):
-                parts = cmd.split()
-                if len(parts) > 1 and parts[1] in state["limits"]:
-                    state["avito_mode"] = parts[1]
-                    print(f"Режим: {parts[1]}")
         except:
             await asyncio.sleep(5)
 
 async def main():
     await app.start()
-    print(f"🚀 Сессия {BOT_NAME} успешно запущена и слушает {TRADE_BOT}!", flush=True)
+    print(f"🚀 Сессия {BOT_NAME} успешно запущена! Слушаю чаты и команды.", flush=True)
     asyncio.create_task(timer_loop())
     asyncio.create_task(container_loop())
-    asyncio.create_task(avito_loop())
     asyncio.create_task(tcard_loop())
     asyncio.create_task(daily_loop())
     asyncio.create_task(console())
