@@ -2,6 +2,7 @@
 import os, asyncio, random, datetime, threading
 from flask import Flask
 from pyrogram import Client, handlers, filters
+from pyrogram import raw
 
 # --- СЕРВЕР ДЛЯ RENDER (KEEP-ALIVE) ---
 app = Flask(__name__)
@@ -369,30 +370,32 @@ async def bg_tasks(client, acc_id):
 async def start_bot():
     global clients, TRUSTED_NAMES
     print("🛠 Инициализация Pyrofork клиентов...", flush=True)
-
+    
     raw_clients = []
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "":
             continue
-
+            
         c = Client(
             name=f"memory_session_{i+1}",
             api_id=API_ID,
             api_hash=API_HASH,
             session_string=session.strip(),
-            in_memory=True
+            in_memory=True,
+            receive_updates=True,
         )
-
+        
         c.add_handler(handlers.MessageHandler(handle_my_messages))
         c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.incoming))
         c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.private & filters.incoming))
         c.add_handler(handlers.EditedMessageHandler(handle_bot_edited_messages))
         
         raw_clients.append((i + 1, c))
-
+        
     for acc_num, c in raw_clients:
         try:
             await c.start()
+            await c.invoke(raw.functions.updates.GetState())
             clients.append(c)
             me = await c.get_me()
             c.me_id = me.id
