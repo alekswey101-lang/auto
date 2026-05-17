@@ -20,19 +20,29 @@ threading.Thread(
     daemon=True
 ).start()
 
-# --- СБОР НАСТРОЕК ИЗ ENVIRONMENT VARIABLES RENDER ---
+# --- УМНЫЙ СБОР НАСТРОЕК ИЗ ENVIRONMENT VARIABLES ---
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
-SESSION_STRING = os.environ.get("SESSION")
+
+# Перебираем все возможные варианты названия переменной сессии
+SESSION_STRING = (
+    os.environ.get("SESSION") or 
+    os.environ.get("SESSION_1") or 
+    os.environ.get("SESSION_2") or 
+    os.environ.get("SESSION_3") or 
+    os.environ.get("SESSION_4") or 
+    os.environ.get("SESSION_5")
+)
 
 if not all([API_ID, API_HASH, SESSION_STRING]):
-    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Заполни API_ID, API_HASH и SESSION в настройках Render!", flush=True)
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Не найдены настройки аккаунта!", flush=True)
+    print(f"Статус на сервере: API_ID={'Задан' if API_ID else 'НЕТ'}, API_HASH={'Задан' if API_HASH else 'НЕТ'}, SESSION={'Задан' if SESSION_STRING else 'НЕТ'}", flush=True)
     sys.exit(1)
 
 try:
     API_ID = int(API_ID)
 except ValueError:
-    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная API_ID должна содержать только цифры!", flush=True)
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная API_ID на Render должна содержать только цифры!", flush=True)
     sys.exit(1)
 
 TRADE_BOT = "phonegetcardsbot"
@@ -228,7 +238,7 @@ async def handle_my_trade_commands(client, msg):
 # --- ТОЧКА ВХОДА ---
 async def main():
     await app.start()
-    print("🚀 Бот успешно запущен на оригинальном Pyrogram!", flush=True)
+    print("🚀 Бот успешно авторизовался и запущен на Pyrogram!", flush=True)
     asyncio.create_task(timer_loop())
     asyncio.create_task(container_loop())
     asyncio.create_task(tcard_loop())
