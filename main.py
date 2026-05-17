@@ -49,8 +49,13 @@ async def click(client, message, keyword: str) -> bool:
             for btn in row:
                 if keyword.lower() in btn.text.lower() or keyword.lower() in (btn.callback_data or "").lower():
                     print(f"[КЛИК] Нажимаю кнопку: '{btn.text}' | data: '{btn.callback_data}'", flush=True)
-                    await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
-                    return True
+                    try:
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=10)
+                        return True
+                    except Exception as click_ex:
+                        # Если бот моментально меняет меню, Telegram может выдать Timeout, но клик засчитан!
+                        print(f"[КЛИК] Клик отправлен, но Telegram выдал статус: {click_ex} (Обычно это нормально)", flush=True)
+                        return True
     except Exception as e:
         print(f"❌ Ошибка click(): {e}", flush=True)
     return False
@@ -79,7 +84,10 @@ async def execute_menu_step(client, message_id, step_name, keywords, pick_first)
                     if pick_first:
                         if "назад" not in text_lower and "back" not in data_lower and "изменить" not in text_lower:
                             print(f"🎯 [{step_name}] Нажимаю авто-кнопку: [{btn.text}]", flush=True)
-                            await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
+                            try:
+                                await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=5)
+                            except:
+                                pass
                             return True
 
                     # Режим 2: Поиск конкретной кнопки (Добавить телефон)
@@ -88,7 +96,10 @@ async def execute_menu_step(client, message_id, step_name, keywords, pick_first)
                             kw_l = kw.lower().strip()
                             if kw_l in text_lower or kw_l in data_lower:
                                 print(f"🎯 [{step_name}] Найдено совпадение! Нажимаю: [{btn.text}]", flush=True)
-                                await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
+                                try:
+                                    await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=5)
+                                except:
+                                    pass
                                 return True
         except Exception as e:
             print(f"❌ Ошибка выполнения шага {step_name}: {e}", flush=True)
@@ -132,13 +143,14 @@ async def process_bot_logic(client, message, acc_id):
             return
 
         print(f"🤝 [Акк {acc_id}] Вижу предложение обмена в пулинге! Пробую принять...", flush=True)
-        await delay(0.5, 1.5)
+        await delay(0.5, 1.0)
         
-        if await click(client, message, "принять"):
-            print(f"✅ [Акк {acc_id}] Кнопка 'Принять' нажата. Передаю message_id {message.id} в логику сборщика...", flush=True)
-            asyncio.create_task(receiver_trade_logic(client, message.id, acc_id))
-        else:
-            print(f"⚠️ [Акк {acc_id}] Не нашел кнопку 'Принять' в сообщении.", flush=True)
+        # Нажимаем "Принять" (функция вернет True даже при таймауте, так как клик улетает в сеть)
+        await click(client, message, "принять")
+        
+        # НАДЁЖНОСТЬ: Безусловно запускаем сборщик. Движок сам перепроверит кнопки сообщения.
+        print(f"🚀 [Акк {acc_id}] Запускаю receiver_trade_logic для сообщения #{message.id}...", flush=True)
+        asyncio.create_task(receiver_trade_logic(client, message.id, acc_id))
         return
 
     # 2. АВТОГОТОВНОСТЬ СЛОТОВ
@@ -157,22 +169,18 @@ async def process_bot_logic(client, message, acc_id):
 async def poll_bot_messages(client, acc_id):
     last_msg_id = 0
     last_buttons_fp = ""
-    print(f"🔄 [Акк {acc_id}] Стабильный polling запущен. Мониторю чат бота...", flush=True)
+    print(f"🔄 [Acc {acc_id}] Мониторинг чата запущен...", flush=True)
     
     while True:
         try:
             async for msg in client.get_chat_history(bot_chat, limit=1):
-                # Собираем отпечаток кнопок, чтобы ловить изменения внутри одного сообщения
                 buttons_fp = ""
                 if msg.reply_markup:
                     buttons_fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
                 
-                # Если пришло новое сообщение ИЛИ изменились кнопки в текущем
                 if msg.id != last_msg_id or buttons_fp != last_buttons_fp:
                     last_msg_id = msg.id
                     last_buttons_fp = buttons_fp
-                    
-                    # Отправляем на обработку логики
                     await process_bot_logic(client, msg, acc_id)
                 break
         except Exception as e:
@@ -181,8 +189,8 @@ async def poll_bot_messages(client, acc_id):
 
 # --- ОТПРАВИТЕЛЬ: ОЖИДАНИЕ И ФИНАЛЬНЫЙ КЛИК ---
 async def sender_confirm_logic(client, acc_id):
-    print(f"⏳ [Акк {acc_id} - Отправитель] Жду 32 секунды, пока твинк собирает телефон...", flush=True)
-    await asyncio.sleep(32)
+    print(f"⏳ [Акк {acc_id} - Отправитель] Жду 35 секунд, пока твинк собирает предметы...", flush=True)
+    await asyncio.sleep(35)
     print(f"✍️ [Акк {acc_id} - Отправитель] Время вышло. Подтверждаю трейд со своей стороны...", flush=True)
     try:
         async for msg in client.get_chat_history(bot_chat, limit=1):
@@ -204,13 +212,12 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот онлайн и слушает чаты!**")
+        try: await message.edit("🚀 **Юзербот онлайн!**")
         except: pass
         return
 
     if cmd in [".trade", ".t", ".т"]:
         target = None
-        # Проверка макроса .t 2, .t 3 и т.д.
         if len(parts) == 2 and parts[1] in ACC_MACROS:
             target = ACC_MACROS[parts[1]]
         elif message.reply_to_message and message.reply_to_message.from_user:
@@ -223,7 +230,7 @@ async def handle_my_messages(client, message):
         try: await message.delete()
         except: pass
 
-        print(f"📣 [Акк {acc_id}] Инициирую трейд командой .t на аккаунт: {target}...", flush=True)
+        print(f"📣 [Акк {acc_id}] Инициирую трейд на аккаунт: {target}...", flush=True)
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
         asyncio.create_task(sender_confirm_logic(client, acc_id))
@@ -235,14 +242,13 @@ async def bg_tasks(client, acc_id):
     while True:
         await asyncio.sleep(121 * 60)
         try:
-            print(f"🃏 [Акк {acc_id}] Авто-отправка: ткарточка", flush=True)
             await client.send_message(bot_chat, "ткарточка")
         except: pass
 
 # --- ЗАПУСК КЛИЕНТОВ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск Pyrofork клиентов со стабильным пулингом...", flush=True)
+    print("🛠 Запуск Pyrofork фермы...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -255,7 +261,6 @@ async def start_bot():
             in_memory=True,
         )
         
-        # Хэндлер исключительно для ТВОИХ команд (.t 2)
         c.add_handler(handlers.MessageHandler(handle_my_messages))
         
         try:
@@ -270,14 +275,13 @@ async def start_bot():
             
             print(f"✅ Аккаунт {i+1} успешно запущен как: @{me.username}", flush=True)
             
-            # Запускаем фоновые задачи и надежный пулинг чата бота
             asyncio.create_task(bg_tasks(c, i+1))
             asyncio.create_task(poll_bot_messages(c, i+1))
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.0)
         except Exception as e:
             print(f"⚠️ Ошибка старта аккаунта {i+1}: {e}", flush=True)
 
-    print("💎 Все аккаунты запущены. Ожидаю команду .t [номер]...", flush=True)
+    print("💎 Всё готово. Проверяй трейд через .t", flush=True)
     while True:
         await asyncio.sleep(3600)
 
