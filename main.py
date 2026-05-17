@@ -37,15 +37,20 @@ async def delay(min_s: float, max_s: float):
 async def click(client, message, keyword: str) -> bool:
     """Ищет кнопку по ключевому слову и нажимает её."""
     if not message.reply_markup:
+        print(f"[DEBUG click] ❌ НЕТ reply_markup у сообщения!", flush=True)
         return False
     try:
+        print(f"[DEBUG click] Ищу кнопку по слову: '{keyword}'", flush=True)
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 text_l = btn.text.lower()
                 data_l = (btn.callback_data or "").lower()
+                print(f"[DEBUG click] кнопка: '{btn.text}' | data: '{btn.callback_data}'", flush=True)
                 if keyword.lower() in text_l or keyword.lower() in data_l:
                     await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
+                    print(f"[DEBUG click] ✅ Нажата кнопка: '{btn.text}'", flush=True)
                     return True
+        print(f"[DEBUG click] ❌ Кнопка с '{keyword}' не найдена среди кнопок выше.", flush=True)
     except Exception as e:
         print(f"❌ click() ошибка: {e}", flush=True)
     return False
@@ -144,7 +149,10 @@ async def manual_farm_logic(client, acc_id, mode="Ручной"):
 
 # --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА ---
 async def process_bot_logic(client, message):
-    if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
+    if not message.chat or not message.chat.username:
+        print(f"[DEBUG] Сообщение без чата/юзернейма, пропускаю.", flush=True)
+        return
+    if message.chat.username.lower() != bot_chat.lower():
         return
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
@@ -158,11 +166,19 @@ async def process_bot_logic(client, message):
     except:
         acc_id = "Х"
 
+    # === ДЕБАГ: каждое сообщение от бота ===
+    print(f"[DEBUG] Акк {acc_id} | markup: {bool(message.reply_markup)} | текст: '{message.text[:120]}'", flush=True)
+
     # 1. ВХОДЯЩИЙ ТРЕЙД — проверка белого списка + принятие
     if "предложение обмена" in text or "пришло предложение" in text:
+        print(f"[DEBUG] Акк {acc_id} | Триггер трейда сработал!", flush=True)
+        print(f"[DEBUG] Акк {acc_id} | TRUSTED_NAMES: {TRUSTED_NAMES}", flush=True)
+
         is_trusted = any(name in text for name in TRUSTED_NAMES)
+        print(f"[DEBUG] Акк {acc_id} | is_trusted: {is_trusted}", flush=True)
+
         if not is_trusted:
-            print(f"🙅 [Акк {acc_id}] Фильтр отклонил трейд: '{message.text}'", flush=True)
+            print(f"🙅 [Акк {acc_id}] Фильтр отклонил трейд. Полный текст: '{message.text}'", flush=True)
             return
 
         print(f"🤝 [Акк {acc_id}] Трейд от своей фермы! Принимаю...", flush=True)
@@ -171,21 +187,27 @@ async def process_bot_logic(client, message):
             print(f"✅ [Акк {acc_id}] Принято! Запускаю receiver_trade_logic...", flush=True)
             asyncio.create_task(receiver_trade_logic(client, acc_id))
         else:
-            print(f"⚠️ [Акк {acc_id}] Кнопка 'Принять' не найдена.", flush=True)
+            print(f"⚠️ [Акк {acc_id}] Кнопка 'Принять' не найдена!", flush=True)
         return
 
     # 2. АВТОГОТОВНОСТЬ
     if "готовность:" in text and "❌" in text and "✅" in text:
+        print(f"[DEBUG] Акк {acc_id} | Триггер ГОТОВНОСТИ сработал!", flush=True)
         await delay(1.5, 3.0)
         if await click(client, message, "готов"):
             print(f"✅ [Акк {acc_id}] Нажал ГОТОВ.", flush=True)
+        else:
+            print(f"⚠️ [Акк {acc_id}] Кнопка 'Готов' не найдена!", flush=True)
         return
 
     # 3. АВТОПОДТВЕРЖДЕНИЕ
     if "подтвердите обмен" in text or "подтвердите" in text:
+        print(f"[DEBUG] Акк {acc_id} | Триггер ПОДТВЕРЖДЕНИЯ сработал!", flush=True)
         await delay(1.0, 2.0)
         if await click(client, message, "подтвердить"):
             print(f"🎉 [Акк {acc_id}] Обмен подтверждён!", flush=True)
+        else:
+            print(f"⚠️ [Акк {acc_id}] Кнопка 'Подтвердить' не найдена!", flush=True)
         return
 
 # Слушаем и новые, и отредактированные сообщения от бота
