@@ -50,84 +50,91 @@ async def click(client, message, keyword: str) -> bool:
                 if keyword.lower() in btn.text.lower() or keyword.lower() in (btn.callback_data or "").lower():
                     print(f"[КЛИК] Нажимаю кнопку: '{btn.text}' | data: '{btn.callback_data}'", flush=True)
                     try:
-                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=10)
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=5)
                         return True
                     except Exception as click_ex:
-                        # Если бот моментально меняет меню, Telegram может выдать Timeout, но клик засчитан!
-                        print(f"[КЛИК] Клик отправлен, но Telegram выдал статус: {click_ex} (Обычно это нормально)", flush=True)
+                        print(f"[КЛИК] Клик отправлен, статус: {click_ex}", flush=True)
                         return True
     except Exception as e:
         print(f"❌ Ошибка click(): {e}", flush=True)
     return False
 
-# --- ОБНОВЛЕННЫЙ ПОШАГОВЫЙ ДВИЖОК КЛИКОВ ---
-async def execute_menu_step(client, message_id, step_name, keywords, pick_first):
-    print(f"🔍 [{step_name}] Ищу ключевые слова {keywords} в сообщении #{message_id}...", flush=True)
+# --- УЛЬТРА-ДИНАМИЧЕСКИЙ ДВИЖОК (РАБОТАЕТ С ПОСЛЕДНИМ СООБЩЕНИЕМ ЧАТА) ---
+async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
+    print(f"🔍 [{step_name}] Ищу ключевые слова {keywords} на актуальном экране...", flush=True)
     
     for attempt in range(15):
         await asyncio.sleep(2)
         try:
-            # Запрашиваем строго то самое сообщение, которое обрабатываем
-            msg = await client.get_messages(bot_chat, message_id)
-            if not msg or not msg.reply_markup:
-                continue
+            # Берём строго САМОЕ СВЕЖЕЕ сообщение из чата бота
+            async for msg in client.get_chat_history(bot_chat, limit=1):
+                if not msg.reply_markup:
+                    continue
 
-            current_buttons = [btn.text for row in msg.reply_markup.inline_keyboard for btn in row]
-            print(f"⏳ [{step_name}] Попытка {attempt+1}/15. Вижу кнопки: {current_buttons}", flush=True)
+                # Создаем отпечаток текущих кнопок
+                fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
+                
+                # Если меню еще не обновилось (кнопки те же, что были на прошлом шаге), ждем следующей попытки
+                if last_fp and fp == last_fp:
+                    continue
 
-            for row in msg.reply_markup.inline_keyboard:
-                for btn in row:
-                    text_lower = btn.text.lower().strip()
-                    data_lower = (btn.callback_data or "").lower().strip()
+                print(f"⏳ [{step_name}] Попытка {attempt+1}/15. Вижу на экране кнопки: {[btn.text for row in msg.reply_markup.inline_keyboard for btn in row]}", flush=True)
 
-                    # Режим 1: Клик по первой попавшейся кнопке
-                    if pick_first:
-                        if "назад" not in text_lower and "back" not in data_lower and "изменить" not in text_lower:
-                            print(f"🎯 [{step_name}] Нажимаю авто-кнопку: [{btn.text}]", flush=True)
-                            try:
-                                await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=5)
-                            except:
-                                pass
-                            return True
+                for row in msg.reply_markup.inline_keyboard:
+                    for btn in row:
+                        text_lower = btn.text.lower().strip()
+                        data_lower = (btn.callback_data or "").lower().strip()
 
-                    # Режим 2: Поиск конкретной кнопки (Добавить телефон)
-                    else:
-                        for kw in keywords:
-                            kw_l = kw.lower().strip()
-                            if kw_l in text_lower or kw_l in data_lower:
-                                print(f"🎯 [{step_name}] Найдено совпадение! Нажимаю: [{btn.text}]", flush=True)
-                                try:
-                                    await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=5)
-                                except:
-                                    pass
-                                return True
+                        # Режим 1: Авто-выбор первой кнопки (Состояние, Редкость, Модель)
+                        if pick_first:
+                            if "назад" not in text_lower and "back" not in data_lower and "изменить" not in text_lower:
+                                print(f"🎯 [{step_name}] Нажимаю авто-кнопку: [{btn.text}]", flush=True)
+                                try: await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=5)
+                                except: pass
+                                return True, fp
+
+                        # Режим 2: Поиск конкретного слова (Добавить телефон, Количество, Подтвердить)
+                        else:
+                            for kw in keywords:
+                                kw_l = kw.lower().strip()
+                                if kw_l in text_lower or kw_l in data_lower:
+                                    print(f"🎯 [{step_name}] Найдено совпадение! Нажимаю: [{btn.text}]", flush=True)
+                                    try: await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=5)
+                                    except: pass
+                                    return True, fp
         except Exception as e:
             print(f"❌ Ошибка выполнения шага {step_name}: {e}", flush=True)
             
     print(f"🛑 [{step_name}] Не удалось выполнить шаг за 15 попыток.", flush=True)
-    return False
+    return False, last_fp
 
 # --- ПОТОКОВАЯ ЛОГИКА СБОРЩИКА ДЛЯ ПОЛУЧАТЕЛЯ ---
-async def receiver_trade_logic(client, message_id, acc_id):
-    print(f"📦 [Акк {acc_id}] Начинаю автоматическую сборку предметов в трейд...", flush=True)
+async def receiver_trade_logic(client, acc_id):
+    print(f"📦 [Акк {acc_id}] Начинаю динамическую сборку трейда по свежим сообщениям...", flush=True)
 
-    # Шаг 1: Нажатие кнопки "Добавить телефон"
-    if not await execute_menu_step(client, message_id, "Добавить телефон", ["добавить телефон", "trade_add_phone"], False): return
+    # Шаг 1: Добавить телефон
+    res, last_fp = await execute_menu_step(client, "Добавить телефон", ["добавить телефон", "trade_add_phone"], False, "")
+    if not res: return
 
     # Шаг 2: Выбор состояния
-    if not await execute_menu_step(client, message_id, "Выбор Состояния", [], True): return
+    res, last_fp = await execute_menu_step(client, "Выбор Состояния", [], True, last_fp)
+    if not res: return
 
     # Шаг 3: Выбор редкости
-    if not await execute_menu_step(client, message_id, "Выбор Редкости", [], True): return
+    res, last_fp = await execute_menu_step(client, "Выбор Редкости", [], True, last_fp)
+    if not res: return
 
     # Шаг 4: Выбор модели
-    if not await execute_menu_step(client, message_id, "Выбор Модели", [], True): return
+    res, last_fp = await execute_menu_step(client, "Выбор Модели", [], True, last_fp)
+    if not res: return
 
     # Шаг 5: Выбор количества (1 шт)
-    if not await execute_menu_step(client, message_id, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False): return
+    res, last_fp = await execute_menu_step(client, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
+    if not res: return
 
     # Шаг 6: Подтверждение получателя
-    if await execute_menu_step(client, message_id, "Финал Получателя", ["подтвердить", "trade_confirm"], False):
+    res, last_fp = await execute_menu_step(client, "Финал Получателя", ["подтвердить", "trade_confirm"], False, last_fp)
+    if res:
         print(f"🎉 [Акк {acc_id}] Трейд успешно собран и подтвержден твинком!", flush=True)
 
 # --- ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ БОТА (ВЫЗЫВАЕТСЯ ИЗ ПУЛИНГА) ---
@@ -142,15 +149,18 @@ async def process_bot_logic(client, message, acc_id):
         if "ваше предложение обмена отправлено" in text:
             return
 
-        print(f"🤝 [Акк {acc_id}] Вижу предложение обмена в пулинге! Пробую принять...", flush=True)
+        print(f"🤝 [Акк {acc_id}] Вижу предложение обмена! Пробую принять...", flush=True)
         await delay(0.5, 1.0)
         
-        # Нажимаем "Принять" (функция вернет True даже при таймауте, так как клик улетает в сеть)
+        # Нажимаем "Принять"
         await click(client, message, "принять")
         
-        # НАДЁЖНОСТЬ: Безусловно запускаем сборщик. Движок сам перепроверит кнопки сообщения.
-        print(f"🚀 [Акк {acc_id}] Запускаю receiver_trade_logic для сообщения #{message.id}...", flush=True)
-        asyncio.create_task(receiver_trade_logic(client, message.id, acc_id))
+        # Даем боту 2 секунды, чтобы он выслал совершенно новое сообщение с меню трейда
+        await asyncio.sleep(2)
+        
+        # Запускаем сборщик, который теперь будет смотреть только на САМОЕ ПОСЛЕДНЕЕ сообщение в чате
+        print(f"🚀 [Акк {acc_id}] Запускаю receiver_trade_logic...", flush=True)
+        asyncio.create_task(receiver_trade_logic(client, acc_id))
         return
 
     # 2. АВТОГОТОВНОСТЬ СЛОТОВ
@@ -185,7 +195,7 @@ async def poll_bot_messages(client, acc_id):
                 break
         except Exception as e:
             print(f"❌ [Акк {acc_id}] Ошибка пулинга: {e}", flush=True)
-        await asyncio.sleep(3)
+        await asyncio.sleep(2) # Опрос каждые 2 секунды для максимальной скорости
 
 # --- ОТПРАВИТЕЛЬ: ОЖИДАНИЕ И ФИНАЛЬНЫЙ КЛИК ---
 async def sender_confirm_logic(client, acc_id):
@@ -281,7 +291,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка старта аккаунта {i+1}: {e}", flush=True)
 
-    print("💎 Всё готово. Проверяй трейд через .t", flush=True)
+    print("💎 Ферма полностью готова. Тестируй через .t", flush=True)
     while True:
         await asyncio.sleep(3600)
 
