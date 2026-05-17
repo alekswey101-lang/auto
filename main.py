@@ -351,22 +351,22 @@ async def handle_my_messages(client, message):
 # --- POLLING ЛИЧНЫХ СООБЩЕНИЙ ОТ БОТА ---
 async def poll_bot_messages(client, acc_id):
     last_msg_id = 0
+    last_msg_text = ""
     print(f"🔄 [Акк {acc_id}] Запущен polling сообщений от бота...", flush=True)
     while True:
         try:
-            async for msg in client.get_chat_history(bot_chat, limit=3):
-                if msg.id <= last_msg_id:
-                    break
-                if last_msg_id == 0:
+            async for msg in client.get_chat_history(bot_chat, limit=1):
+                current_text = (msg.text or "")
+                if msg.id != last_msg_id or current_text != last_msg_text:
+                    if last_msg_id != 0:
+                        print(f"[POLL] Акк {acc_id} | id={msg.id}: '{current_text[:80]}'", flush=True)
+                        await process_bot_logic(client, msg)
                     last_msg_id = msg.id
-                    break
-                print(f"[POLL] Акк {acc_id} | Новое сообщение id={msg.id}: '{(msg.text or '')[:80]}'", flush=True)
-                last_msg_id = msg.id
-                await process_bot_logic(client, msg)
+                    last_msg_text = current_text
                 break
         except Exception as e:
             print(f"❌ [Акк {acc_id}] Ошибка polling: {e}", flush=True)
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
 
 # --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
 async def bg_tasks(client, acc_id):
