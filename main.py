@@ -3,30 +3,38 @@ import asyncio
 import random
 import re
 import sys
-import json
 import os
+import threading
 from datetime import datetime, timezone, timedelta
+from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
 
-# =====================================================================
-# 🛠️ НАСТРОЙКА АККАУНТА (Впиши свои данные вместо примеров ниже)
-# =====================================================================
-API_ID = 12345678  # Твой API ID (цифрами, без кавычек)
-API_HASH = "твой_api_hash_сюда"  # Твой API Hash (в кавычек)
-SESSION_STRING = "твоя_длинная_строка_сессии_telethon_или_pyrogram"  # Строка сессии
-# =====================================================================
+# --- ФОНОВЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER (ЗАЩИТА ОТ УБИЙСТВА ПРОЦЕССА) ---
+app_flask = Flask(__name__)
+@app_flask.route('/')
+def health(): return "OK", 200
 
-BOT_NAME = sys.argv[1] if len(sys.argv) > 1 else "main"
+threading.Thread(
+    target=lambda: app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), 
+    daemon=True
+).start()
 
-# Автоматически генерируем конфиг, чтобы не требовать файл accounts.json
-cfg = {
-    "api_id": API_ID,
-    "api_hash": API_HASH,
-    "session": SESSION_STRING
-}
+# --- СБОР НАСТРОЕК ИЗ ПЕРЕМЕННЫХ СРЕДЫ RENDER ---
+API_ID = os.environ.get("API_ID")
+API_HASH = os.environ.get("API_HASH")
+SESSION_STRING = os.environ.get("SESSION")
 
-SESSION_NAME = cfg["session"]
+if not all([API_ID, API_HASH, SESSION_STRING]):
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Заполни API_ID, API_HASH и SESSION в настройках Render!", flush=True)
+    sys.exit(1)
+
+try:
+    API_ID = int(API_ID)
+except ValueError:
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Переменная API_ID должна содержать только цифры!", flush=True)
+    sys.exit(1)
+
 TRADE_BOT = "phonegetcardsbot"
 ROULETTE_BOT = "phonegetroulettebot"
 MSK = timezone(timedelta(hours=3))
@@ -38,6 +46,7 @@ state = {
     "last_action_time": 0
 }
 
+# Быстрые макросы для команды .t (1-5)
 ACC_MACROS = {
     "1": "boymorale",
     "2": "tintedwindow",
@@ -46,7 +55,14 @@ ACC_MACROS = {
     "5": "ivannomor"
 }
 
-app = Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH)
+# Создаем клиент Pyrogram в оперативной памяти (in_memory=True)
+app = Client(
+    name="render_session",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=SESSION_STRING,
+    in_memory=True
+)
 
 def now():
     return asyncio.get_event_loop().time()
@@ -79,6 +95,7 @@ async def click(msg, name):
     for row in msg.reply_markup.inline_keyboard:
         for btn in row:
             if getattr(btn, "text", "") and getattr(btn, "callback_data", None):
+                # Очищаем текст кнопки от смайликов и спецсимволов для точного совпадения
                 clean_btn_text = re.sub(r'[^\w\s]', '', btn.text).lower().strip()
                 
                 if target in clean_btn_text or target in btn.text.lower():
@@ -160,6 +177,7 @@ async def process_bot_logic(msg):
             state["locks"]["containers"] = False
             state["timers"]["containers"] = 15
 
+    # --- УМНЫЙ АВТО-ТРЕЙД ---
     if "предложение обмена" in text or "пришло предложение" in text:
         print("🤝 Обнаружен трейд, нажимаю Принять...", flush=True)
         await delay(1.0, 2.0)
@@ -183,6 +201,7 @@ async def handle_new_messages(client, msg):
 async def handle_edited_messages(client, msg):
     await process_bot_logic(msg)
 
+# Словесные команды .t
 @app.on_message(filters.me & filters.command(["t", "trade", "т"], prefixes=["."]))
 async def handle_my_trade_commands(client, msg):
     parts = msg.text.split()
@@ -205,28 +224,13 @@ async def handle_my_trade_commands(client, msg):
     bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
     await client.send_message(TRADE_BOT, bot_cmd)
 
-async def console():
-    while True:
-        try:
-            cmd = await asyncio.to_thread(sys.stdin.readline)
-            cmd = cmd.strip().lower()
-            if cmd == "stop":
-                state["running"] = False
-                print("Пауза", flush=True)
-            elif cmd == "start":
-                state["running"] = True
-                print("Старт", flush=True)
-        except:
-            await asyncio.sleep(5)
-
 async def main():
     await app.start()
-    print(f"🚀 Сессия '{BOT_NAME}' успешно запущенна! Автопринятие и команды активны.", flush=True)
+    print("🚀 Бот успешно запущен на переменных Render на базе Pyrogram!", flush=True)
     asyncio.create_task(timer_loop())
     asyncio.create_task(container_loop())
     asyncio.create_task(tcard_loop())
     asyncio.create_task(daily_loop())
-    asyncio.create_task(console())
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
