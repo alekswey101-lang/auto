@@ -201,8 +201,8 @@ async def process_bot_logic(client, message):
             print(f"⚠️ [Акк {acc_id}] Кнопка 'Принять' не найдена!", flush=True)
         return
 
-    # 2. АВТОГОТОВНОСТЬ
-    if "готовность:" in text and "❌" in text and "✅" in text:
+   # 2. АВТОГОТОВНОСТЬ
+    if "готовность:" in text and "❌" in text and "✅" in text or "занято слотов: 10/10" in text:
         print(f"[DEBUG] Акк {acc_id} | Триггер ГОТОВНОСТИ сработал!", flush=True)
         await delay(1.5, 3.0)
         if await click(client, message, "готов"):
