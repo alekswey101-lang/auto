@@ -395,10 +395,17 @@ async def start_bot():
         try:
             await c.start()
             await c.invoke(raw.functions.updates.GetState())
+            
+            # Принудительно открываем диалог с ботом
+            try:
+                await c.send_message(bot_chat, "/start")
+                print(f"[Акк {acc_num}] Отправил /start боту для активации апдейтов", flush=True)
+            except Exception as ex:
+                print(f"[Акк {acc_num}] Не смог отправить /start: {ex}", flush=True)
+
             clients.append(c)
             me = await c.get_me()
             c.me_id = me.id
-            # Принудительная синхронизация апдейтов
             async for _ in c.get_dialogs(limit=5):
                 pass
             if me.first_name:
