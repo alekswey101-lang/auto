@@ -9,43 +9,24 @@ from datetime import datetime, timezone, timedelta
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
 
-# --- ЗАЩИЩЕННЫЙ МЕХАНИЗМ ЗАГРУЗКИ КОНФИГА ---
-if not os.path.exists("accounts.json"):
-    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Файл 'accounts.json' не найден в корневой директории!", flush=True)
-    print("Убедись, что ты загрузил accounts.json на сервер вместе со скриптом.", flush=True)
-    sys.exit(1)
+# =====================================================================
+# 🛠️ НАСТРОЙКА АККАУНТА (Впиши свои данные вместо примеров ниже)
+# =====================================================================
+API_ID = 12345678  # Твой API ID (цифрами, без кавычек)
+API_HASH = "твой_api_hash_сюда"  # Твой API Hash (в кавычек)
+SESSION_STRING = "твоя_длинная_строка_сессии_telethon_или_pyrogram"  # Строка сессии
+# =====================================================================
 
-with open("accounts.json", "r", encoding="utf-8") as f:
-    try:
-        accounts = json.load(f)
-    except Exception as e:
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось прочитать accounts.json. Ошибка в формате JSON: {e}", flush=True)
-        sys.exit(1)
+BOT_NAME = sys.argv[1] if len(sys.argv) > 1 else "main"
 
-BOT_NAME = sys.argv[1] if len(sys.argv) > 1 else None
+# Автоматически генерируем конфиг, чтобы не требовать файл accounts.json
+cfg = {
+    "api_id": API_ID,
+    "api_hash": API_HASH,
+    "session": SESSION_STRING
+}
 
-if not BOT_NAME:
-    # Если аргумент не передан, автоматически берем самый первый аккаунт из файла
-    BOT_NAME = list(accounts.keys())[0]
-    print(f"⚠️ Аргумент имени бота не передан. Автоматически выбран первый аккаунт: '{BOT_NAME}'", flush=True)
-
-if BOT_NAME not in accounts:
-    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Аккаунт '{BOT_NAME}' не найден в accounts.json!", flush=True)
-    print(f"Доступные аккаунты в файле: {list(accounts.keys())}", flush=True)
-    sys.exit(1)
-
-cfg = accounts[BOT_NAME]
-
-# Проверяем наличие всех ключей в конфиге аккаунта
-for key in ["api_id", "api_hash", "session"]:
-    if key not in cfg:
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: В настройках аккаунта '{BOT_NAME}' отсутствует поле '{key}'!", flush=True)
-        sys.exit(1)
-
-API_ID = cfg["api_id"]
-API_HASH = cfg["api_hash"]
 SESSION_NAME = cfg["session"]
-
 TRADE_BOT = "phonegetcardsbot"
 ROULETTE_BOT = "phonegetroulettebot"
 MSK = timezone(timedelta(hours=3))
