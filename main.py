@@ -20,7 +20,7 @@ threading.Thread(
     daemon=True
 ).start()
 
-# --- СБОР НАСТРОЕК ИЗ ПЕРЕМЕННЫХ СРЕДЫ RENDER ---
+# --- СБОР НАСТРОЕК ИЗ ENVIRONMENT VARIABLES RENDER ---
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 SESSION_STRING = os.environ.get("SESSION")
@@ -95,7 +95,6 @@ async def click(msg, name):
     for row in msg.reply_markup.inline_keyboard:
         for btn in row:
             if getattr(btn, "text", "") and getattr(btn, "callback_data", None):
-                # Очищаем текст кнопки от смайликов и спецсимволов для точного совпадения
                 clean_btn_text = re.sub(r'[^\w\s]', '', btn.text).lower().strip()
                 
                 if target in clean_btn_text or target in btn.text.lower():
@@ -109,6 +108,7 @@ async def click(msg, name):
                         return False
     return False
 
+# --- ИГРОВЫЕ ТАЙМЕРЫ И ЦИКЛЫ ---
 async def tcard_loop():
     while True:
         if state["running"] and "tcard" not in state["timers"]:
@@ -151,6 +151,7 @@ async def timer_loop():
                 del state["timers"][k]
         await asyncio.sleep(1)
 
+# --- ЛОГИКА АВТОПРИНЯТИЯ И КОНТЕНЕРОВ ---
 async def process_bot_logic(msg):
     text = (msg.text or msg.caption or "").lower()
     
@@ -201,7 +202,7 @@ async def handle_new_messages(client, msg):
 async def handle_edited_messages(client, msg):
     await process_bot_logic(msg)
 
-# Словесные команды .t
+# --- ОБРАБОТКА СЛОВЕСНЫХ КОМАНД (.t) ---
 @app.on_message(filters.me & filters.command(["t", "trade", "т"], prefixes=["."]))
 async def handle_my_trade_commands(client, msg):
     parts = msg.text.split()
@@ -224,9 +225,10 @@ async def handle_my_trade_commands(client, msg):
     bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
     await client.send_message(TRADE_BOT, bot_cmd)
 
+# --- ТОЧКА ВХОДА ---
 async def main():
     await app.start()
-    print("🚀 Бот успешно запущен на переменных Render на базе Pyrogram!", flush=True)
+    print("🚀 Бот успешно запущен на оригинальном Pyrogram!", flush=True)
     asyncio.create_task(timer_loop())
     asyncio.create_task(container_loop())
     asyncio.create_task(tcard_loop())
