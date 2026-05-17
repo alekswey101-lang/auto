@@ -355,7 +355,7 @@ async def poll_bot_messages(client, acc_id):
     print(f"🔄 [Акк {acc_id}] Запущен polling сообщений от бота...", flush=True)
     while True:
         try:
-            async for msg in client.get_chat_history(bot_chat, limit=1):
+            async for msg in client.get_chat_history(bot_chat, limit=5):
                 current_text = (msg.text or "")
                 if msg.id != last_msg_id or current_text != last_msg_text:
                     if last_msg_id != 0:
@@ -366,7 +366,7 @@ async def poll_bot_messages(client, acc_id):
                 break
         except Exception as e:
             print(f"❌ [Акк {acc_id}] Ошибка polling: {e}", flush=True)
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
 
 # --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
 async def bg_tasks(client, acc_id):
