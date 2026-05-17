@@ -8,7 +8,7 @@ import threading
 from datetime import datetime, timezone, timedelta
 from flask import Flask
 
-# Настройка веб-сервера для Render
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def health(): return "OK", 200
@@ -21,7 +21,7 @@ try:
 except Exception as e:
     print(f"⚠️ Предупреждение Flask: {e}", flush=True)
 
-# Глобальный перехват ошибок импорта Pyrogram
+# Импорт Pyrogram
 try:
     from pyrogram import Client, filters
     from pyrogram.errors import FloodWait
@@ -29,21 +29,23 @@ except Exception as e:
     print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ИМПОРТА PYROGRAM: {e}", flush=True)
     sys.exit(1)
 
-# --- БЛОК ИНИЦИАЛИЗАЦИИ И ПРОВЕРКИ ПЕРЕМЕННЫХ ---
+# --- УМНЫЙ ПОИСК СЕССИИ ---
 API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 
-SESSION_STRING = (
-    os.environ.get("SESSION") or 
-    os.environ.get("SESSION_1") or 
-    os.environ.get("SESSION_2") or 
-    os.environ.get("SESSION_3") or 
-    os.environ.get("SESSION_4") or 
-    os.environ.get("SESSION_5")
-)
+SESSION_STRING = None
+FOUND_KEY = None
+
+# Скрипт сам определит, какая именно переменная задана на данном инстансе Render
+for key in ["SESSION", "SESSION_1", "SESSION_2", "SESSION_3", "SESSION_4", "SESSION_5"]:
+    val = os.environ.get(key)
+    if val:
+        SESSION_STRING = val
+        FOUND_KEY = key
+        break
 
 if not all([API_ID, API_HASH, SESSION_STRING]):
-    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют переменные окружения на Render!", flush=True)
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Не найдены API_ID, API_HASH или SESSION_1-5 в настройках Render!", flush=True)
     sys.exit(1)
 
 try:
@@ -51,6 +53,8 @@ try:
 except ValueError:
     print("❌ КРИТИЧЕСКАЯ ОШИБКА: API_ID должен состоять только из цифр!", flush=True)
     sys.exit(1)
+
+print(f"ℹ️ Успешно определена конфигурация. Используется переменная среды: {FOUND_KEY}", flush=True)
 
 TRADE_BOT = "phonegetcardsbot"
 ROULETTE_BOT = "phonegetroulettebot"
@@ -123,13 +127,15 @@ async def click(msg, name):
                         return False
     return False
 
-# --- АСИНХРОННЫЕ ЦИКЛЫ АВТОМАТИЗАЦИИ ---
+# --- АСИНХРОННЫЕ ЦИКЛЫ (ТЕПЕРЬ С ДИАГНОСТИКОЙ ОШИБОК) ---
 async def tcard_loop():
     while True:
         if state["running"] and "tcard" not in state["timers"]:
             state["timers"]["tcard"] = 120
-            try: await app.send_message(TRADE_BOT, "ткарточка")
-            except: pass
+            try: 
+                await app.send_message(TRADE_BOT, "ткарточка")
+            except Exception as e: 
+                print(f"⚠️ [{FOUND_KEY}] Ошибка отправки команды 'ткарточка': {e}", flush=True)
         await asyncio.sleep(15)
 
 async def daily_loop():
@@ -144,7 +150,8 @@ async def daily_loop():
                 await delay()
                 await app.send_message(ROULETTE_BOT, "рулетка")
                 done = True
-            except: pass
+            except Exception as e:
+                print(f"⚠️ [{FOUND_KEY}] Ошибка отправки ежедневных команд: {e}", flush=True)
         if n.hour != 1:
             done = False
         await asyncio.sleep(30)
@@ -152,10 +159,13 @@ async def daily_loop():
 async def container_loop():
     while True:
         if state["running"] and "containers" not in state["timers"] and not state["locks"]["containers"]:
-            state["locks"]["containers"] = True
+            state["locks"]["locks"] = True
             state["timers"]["containers"] = 25
-            try: await app.send_message(TRADE_BOT, "Магазин контейнеров")
-            except: state["locks"]["containers"] = False
+            try: 
+                await app.send_message(TRADE_BOT, "Магазин контейнеров")
+            except Exception as e: 
+                print(f"⚠️ [{FOUND_KEY}] Ошибка отправки запроса контейнеров: {e}", flush=True)
+                state["locks"]["containers"] = False
         await asyncio.sleep(8)
 
 async def timer_loop():
@@ -203,28 +213,26 @@ async def process_bot_logic(msg):
         await delay(1.0, 2.0)
         await click(msg, "подтвердить")
 
-@app.on_message(filters.chat([TRADE_BOT, ROULETTE_BOT]))
+# ВАЖНО: Фильтр & ~filters.me сообщает скрипту НЕ обрабатывать твои собственные сообщения как команды игрового бота!
+@app.on_message(filters.chat([TRADE_BOT, ROULETTE_BOT]) & ~filters.me)
 async def handle_new_messages(client, msg):
     await process_bot_logic(msg)
 
-@app.on_edited_message(filters.chat([TRADE_BOT, ROULETTE_BOT]))
+@app.on_edited_message(filters.chat([TRADE_BOT, ROULETTE_BOT]) & ~filters.me)
 async def handle_edited_messages(client, msg):
     await process_bot_logic(msg)
 
-# --- ФИКСИРОВАННЫЙ БЛОК КОМАНДЫ .t (РАБОТАЕТ ВЕЗДЕ) ---
+# --- КОМАНДА .t (ТЕПЕРЬ РАБОТАЕТ И В ЛС БОТА) ---
 @app.on_message(filters.me & filters.command(["t", "trade", "т"], prefixes=["."]))
 async def handle_my_trade_commands(client, msg):
     parts = msg.text.split()
     target = None
 
-    # 1. Макросы .t 1, .t 2 и т.д.
     if len(parts) == 2 and parts[1] in ACC_MACROS:
         target = ACC_MACROS[parts[1]]
-    # 2. Репли (ответ на сообщение)
     elif msg.reply_to_message and msg.reply_to_message.from_user:
         user = msg.reply_to_message.from_user
         target = user.username or str(user.id)
-    # 3. Прямой юзернейм типа .t @username
     elif len(parts) >= 2:
         target = parts[1].replace("@", "").strip()
 
@@ -235,26 +243,25 @@ async def handle_my_trade_commands(client, msg):
     except: pass
 
     bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
-    
-    # Отправляем команду СТРОГО в чат к TRADE_BOT, даже если написали её в другом месте
     await client.send_message(TRADE_BOT, bot_cmd)
 
+# --- ТОЧКА ВХОДА ---
 async def main():
     try:
         await app.start()
-        print("🚀 Бот успешно авторизовался в Telegram на базе Pyrogram!", flush=True)
+        print(f"🚀 Аккаунт [{FOUND_KEY}] успешно авторизован и запущен!", flush=True)
         asyncio.create_task(timer_loop())
         asyncio.create_task(container_loop())
         asyncio.create_task(tcard_loop())
         asyncio.create_task(daily_loop())
         await asyncio.Event().wait()
     except Exception as e:
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ СТАРТЕ АСИНХРОННОГО ЦИКЛА: {e}", flush=True)
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПРИ СТАРТЕ: {e}", flush=True)
         sys.exit(1)
 
 if __name__ == "__main__":
     try:
         app.run(main())
     except Exception as main_err:
-        print(f"❌ КРИТИЧЕСКИЙ СБОЙ В МЕТОДЕ RUN: {main_err}", flush=True)
+        print(f"❌ КРИТИЧЕСКИЙ СБОЙ В RUN: {main_err}", flush=True)
         sys.exit(1)
