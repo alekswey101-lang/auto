@@ -77,7 +77,8 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
     for attempt in range(12):
         await asyncio.sleep(2)
         try:
-            async for msg in client.get_chat_history(bot_chat, limit=1):
+            # Читаем чуть глубже (limit=3), чтобы не пропускать отредактированные ботом меню
+            async for msg in client.get_chat_history(bot_chat, limit=3):
                 if not msg.reply_markup:
                     continue
 
@@ -98,7 +99,8 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
                         else:
                             for kw in keywords:
                                 kw_l = kw.lower().strip()
-                                if kw_l in text_lower or data_lower.startswith(kw_l):
+                                # Мягкий поиск через 'in' защищает от динамических ID в callback_data
+                                if kw_l in text_lower or kw_l in data_lower:
                                     await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
                                     print(f"✅ [{step_name}] Успешно нажата кнопка: [{btn.text}]", flush=True)
                                     return True, fp
@@ -110,7 +112,8 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
 async def receiver_trade_logic(client, acc_id):
     print(f"📦 [Акк {acc_id} - Получатель] Запуск умного сборщика телефонов в трейд...", flush=True)
 
-    res, last_fp = await execute_menu_step(client, "Кнопка Добавить", ["добавить телефон", "trade_add_phone_start"], False, "")
+    # Убран жесткий корень "_start", чтобы ловить любые вариации динамических колбэков бота
+    res, last_fp = await execute_menu_step(client, "Кнопка Добавить", ["добавить телефон", "trade_add_phone"], False, "")
     if not res: return
 
     res, last_fp = await execute_menu_step(client, "Выбор Состояния", [], True, last_fp)
@@ -175,8 +178,6 @@ async def process_bot_logic(client, message):
         return
 
     chat_info = f"{getattr(message.chat, 'username', None)} | id={getattr(message.chat, 'id', None)}"
-    print(f"[ALL MSG] Акк {acc_id} | чат: {chat_info} | текст: '{message.text[:80]}'", flush=True)
-
     chat_username = (getattr(message.chat, 'username', None) or '').lower()
     sender_username = (getattr(message.from_user, 'username', None) or '').lower() if message.from_user else ''
 
@@ -233,13 +234,6 @@ async def process_bot_logic(client, message):
         else:
             print(f"⚠️ [Акк {acc_id}] Кнопка 'Подтвердить' не найдена!", flush=True)
         return
-
-# Слушаем и новые, и отредактированные сообщения от бота
-async def handle_bot_messages(client, message):
-    await process_bot_logic(client, message)
-
-async def handle_bot_edited_messages(client, message):
-    await process_bot_logic(client, message)
 
 # --- ОБРАБОТЧИК ТВОИХ КОМАНД (.farmn, .t, .ping) ---
 async def handle_my_messages(client, message):
@@ -353,9 +347,8 @@ async def start_bot():
             in_memory=True,
         )
         
+        # Оставляем хэндлер только для твоих команд из чата (.ping, .t, .farmn)
         c.add_handler(handlers.MessageHandler(handle_my_messages))
-        c.add_handler(handlers.MessageHandler(handle_bot_messages, filters.incoming))
-        c.add_handler(handlers.EditedMessageHandler(handle_bot_edited_messages))
         
         raw_clients.append((i + 1, c))
         
