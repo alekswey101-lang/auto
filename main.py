@@ -17,9 +17,7 @@ SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
 clients = []
-
-# Базовый список доверенных юзернеймов фермы (в нижнем регистре и без @)
-TRUSTED_NAMES = ["boymorale", "tintedwindow", "cutemald", "dennyom", "ivannomor"]
+my_usernames = set()  # База юзернеймов твоих аккаунтов
 
 # Макросы для быстрого трейда по номерам аккаунтов
 ACC_MACROS = {
@@ -99,7 +97,7 @@ async def sender_confirm_logic(client, acc_id):
                     for btn in row:
                         if "подтвердить" in btn.text.lower() or (btn.callback_data and "trade_confirm" in btn.callback_data.lower()):
                             await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data)
-                            print(f"✅ [Акк {acc_id} - Отправитель] Трейд зафиксирован и подтвержден!", flush=True)
+                            print(f"✅ [Acc {acc_id} - Отправитель] Трейд зафиксирован и подтвержден!", flush=True)
                             return
     except Exception as e:
         print(f"❌ Ошибка подтверждения у отправителя {acc_id}: {e}", flush=True)
@@ -122,7 +120,7 @@ async def manual_farm_logic(client, acc_id, mode="Ручной"):
     except Exception as e:
         print(f"❌ Ошибка сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ОБРАБОТЧИК СООБЩЕНИЙ ИГРОВОГО БОТА (ОБЩАЯ ЛОГИКА) ---
+# --- ТОТ САМЫЙ ВЧЕРАШНИЙ РАБОЧИЙ ОБРАБОТЧИК БОТА ---
 async def process_bot_logic(client, message):
     if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
         return
@@ -133,41 +131,40 @@ async def process_bot_logic(client, message):
     if not message.text: return
     text = message.text.lower()
     
-    try: acc_id = clients.index(client) + 1
-    except: acc_id = "Х"
-
-    # 1. АВТОПРИНЯТИЕ ВХОДЯЩЕГО ТРЕЙДА
+    # Твоя вчерашняя безотказная логика проверки "свой-чужой" и автопринятия
     if "предложение обмена" in text or "пришло предложение" in text:
-        # Сверхнадежный поиск по тексту без учета регистра и спецсимволов (@, запятые)
-        is_trusted = False
-        for name in TRUSTED_NAMES:
-            if name in text:
-                is_trusted = True
+        is_from_farm = False
+        for uname in my_usernames:
+            if uname in text:
+                is_from_farm = True
                 break
+
+        if is_from_farm:
+            try: acc_id = clients.index(client) + 1
+            except: acc_id = "Х"
                 
-        if not is_trusted:
-            print(f"🙅‍♂️ [Акк {acc_id}] Фильтр безопасности отклонил трейд. Текст бота: '{message.text}'", flush=True)
-            return
+            print(f"🤝 [Акк {acc_id}] Обнаружен внутренний обмен! Нажимаю Принять...", flush=True)
+            await asyncio.sleep(2) 
+            
+            try:
+                if message.reply_markup:
+                    for row in message.reply_markup.inline_keyboard:
+                        for btn in row:
+                            text_btn = btn.text.lower()
+                            data_btn = (btn.callback_data or "").lower()
+                            
+                            if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
+                                await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
+                                print(f"✅ [Акк {acc_id}] Входящий трейд успешно принят! Запускаю заполнение...", flush=True)
+                                asyncio.create_task(receiver_trade_logic(client, acc_id))
+                                return
+            except Exception as e:
+                print(f"❌ Не удалось нажать Принять на акке {acc_id}: {e}", flush=True)
 
-        print(f"🤝 [Акк {acc_id}] Входящий трейд от своей фермы распознан! Нажимаю Принять...", flush=True)
-        await asyncio.sleep(1.5) 
-        try:
-            if message.reply_markup:
-                for row in message.reply_markup.inline_keyboard:
-                    for btn in row:
-                        text_btn = btn.text.lower()
-                        data_btn = (btn.callback_data or "").lower()
-                        
-                        if "принять" in text_btn or "accept" in data_btn or "trade_accept" in data_btn:
-                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
-                            print(f"✅ [Акк {acc_id}] Кнопка 'Принять' успешно нажата! Перехожу к заполнению...", flush=True)
-                            asyncio.create_task(receiver_trade_logic(client, acc_id))
-                            return
-        except Exception as e:
-            print(f"❌ Не удалось нажать Принять на акке {acc_id}: {e}", flush=True)
-
-    # 2. АВТОГОТОВНОСТЬ (10/10 или когда партнер нажал готов)
-    if "занято слотов: 10/10" in text or ("готовность:" in text and "❌" in text and "✅" in text):
+    # Автоготовность при заполнении слотов 10/10
+    elif "занято слотов: 10/10" in text or ("готовность:" in text and "❌" in text and "✅" in text):
+        try: acc_id = clients.index(client) + 1
+        except: acc_id = "Х"
         await asyncio.sleep(1.5)
         try:
             if message.reply_markup:
@@ -175,33 +172,19 @@ async def process_bot_logic(client, message):
                     for btn in row:
                         if "готов" in btn.text.lower() or (btn.callback_data and "trade_ready" in btn.callback_data.lower()):
                             await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
-                            print(f"✅ [Акк {acc_id}] Все условия выполнены! Нажал кнопку ГОТОВ.", flush=True)
+                            print(f"✅ [Акк {acc_id}] Условия выполнены! Нажал кнопку ГОТОВ.", flush=True)
                             return
         except Exception as e:
             print(f"❌ Не удалось нажать Готов на акке {acc_id}: {e}", flush=True)
 
-    # 3. АВТОПОДТВЕРЖДЕНИЕ ОБМЕНА
-    if "подтвердите обмен" in text or "подтвердите" in text:
-        await asyncio.sleep(1.5)
-        try:
-            if message.reply_markup:
-                for row in message.reply_markup.inline_keyboard:
-                    for btn in row:
-                        if "подтверд" in btn.text.lower() or (btn.callback_data and "trade_confirm" in btn.callback_data.lower()):
-                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
-                            print(f"🎉 [Акк {acc_id}] Обмен успешно ПОДТВЕРЖДЕН!", flush=True)
-                            return
-        except Exception as e:
-            print(f"❌ Не удалось нажать Подтвердить на акке {acc_id}: {e}", flush=True)
-
-# Слушаем и новые, и отредактированные сообщения от PhoneGet-бота
+# Дублируем вызовы на новые и отредактированные сообщения от бота
 async def handle_bot_messages(client, message):
     await process_bot_logic(client, message)
 
 async def handle_bot_edited_messages(client, message):
     await process_bot_logic(client, message)
 
-# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД (.farmn, .t) ---
+# --- ЖЕЛЕЗНЫЙ ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД ---
 async def handle_my_messages(client, message):
     if not message.text: return
     
@@ -221,6 +204,7 @@ async def handle_my_messages(client, message):
         except: pass
         return
 
+    # Мгновенный ручной сбор со всей фермы
     if cmd == ".farmn":
         print(f"⚡ [Акк {acc_id}] Получена команда принудительного сбора .farmn!", flush=True)
         try: await message.delete()
@@ -229,6 +213,7 @@ async def handle_my_messages(client, message):
             asyncio.create_task(manual_farm_logic(cl, i + 1, mode="Принудительный ручной"))
         return
 
+    # Обработка команд инициации обмена (.t, .trade, .т)
     if cmd in [".trade", ".t", ".т"]:
         print(f"⚡ [Акк {acc_id}] Поймал команду трейда: '{message.text}'", flush=True)
         target = None
@@ -252,7 +237,7 @@ async def handle_my_messages(client, message):
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
         
-        if target.lower() in TRUSTED_NAMES:
+        if target.lower() in my_usernames or target in my_usernames:
             asyncio.create_task(sender_confirm_logic(client, acc_id))
 
 # --- ФОНОВЫЕ ЗАДАЧИ ПО ТАЙМЕРУ ---
@@ -267,6 +252,7 @@ async def bg_tasks(client, acc_id):
             print(f"🃏 [Акк {acc_id}] Время пришло: отправляю 'ткарточка'...", flush=True)
             await client.send_message(bot_chat, "ткарточка")
             
+            # Сбор прибыли в 00:00 по МСК (21:00 UTC)
             now = datetime.datetime.utcnow()
             if now.hour == 21 and now.minute <= 25:
                 await manual_farm_logic(client, acc_id, mode="Плановый ночной (00:00 МСК)")
@@ -275,7 +261,7 @@ async def bg_tasks(client, acc_id):
 
 # --- ЗАПУСК КЛИЕНТОВ ---
 async def start_bot():
-    global clients, TRUSTED_NAMES
+    global clients, my_usernames
     print("🛠 Инициализация Pyrofork клиентов...", flush=True)
     
     raw_clients = []
@@ -305,17 +291,17 @@ async def start_bot():
             me = await c.get_me()
             c.me_id = me.id  
             
-            if me.first_name:
-                TRUSTED_NAMES.append(me.first_name.lower())
-            TRUSTED_NAMES.append(str(me.id))
+            if me.username:
+                my_usernames.add(me.username.lower())
+            my_usernames.add(str(me.id)) 
                 
-            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | Имя: {me.first_name})", flush=True)
+            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username})", flush=True)
             asyncio.create_task(bg_tasks(c, acc_num))
         except Exception as e:
             print(f"⚠️ [Ошибка] Аккаунт {acc_num} не запущен: {e}", flush=True)
 
-    TRUSTED_NAMES = list(set(TRUSTED_NAMES))
-    print(f"💎 Белый список имен для распознавания трейдов: {TRUSTED_NAMES}", flush=True)
+    print(f"💎 База своих аккаунтов для авто-трейда: {my_usernames}", flush=True)
+    print(f"💎 Юзербот запущен. Активных сессий: {len(clients)}", flush=True)
     
     while True:
         await asyncio.sleep(3600)
