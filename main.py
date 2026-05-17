@@ -158,10 +158,16 @@ async def process_bot_logic(client, message):
     chat_info = f"{getattr(message.chat, 'username', None)} | id={getattr(message.chat, 'id', None)}"
     print(f"[ALL MSG] Акк {acc_id} | чат: {chat_info} | текст: '{(message.text or '')[:80]}'", flush=True)
 
-    if not message.chat or not message.chat.username:
-        print(f"[DEBUG] Акк {acc_id} | Нет чата/юзернейма, пропускаю.", flush=True)
+    if not message.chat:
         return
-    if message.chat.username.lower() != bot_chat.lower():
+
+    # Проверяем и по username чата и по username отправителя
+    chat_username = (getattr(message.chat, 'username', None) or '').lower()
+    sender_username = (getattr(message.from_user, 'username', None) or '').lower() if message.from_user else ''
+
+    is_our_bot = (chat_username == bot_chat.lower()) or (sender_username == bot_chat.lower())
+
+    if not is_our_bot:
         return
     if message.from_user and message.from_user.id == getattr(client, "me_id", 0):
         return
@@ -194,6 +200,26 @@ async def process_bot_logic(client, message):
             print(f"⚠️ [Акк {acc_id}] Кнопка 'Принять' не найдена!", flush=True)
         return
 
+    # 2. АВТОГОТОВНОСТЬ
+    if "готовность:" in text and "❌" in text and "✅" in text:
+        print(f"[DEBUG] Акк {acc_id} | Триггер ГОТОВНОСТИ сработал!", flush=True)
+        await delay(1.5, 3.0)
+        if await click(client, message, "готов"):
+            print(f"✅ [Акк {acc_id}] Нажал ГОТОВ.", flush=True)
+        else:
+            print(f"⚠️ [Акк {acc_id}] Кнопка 'Готов' не найдена!", flush=True)
+        return
+
+    # 3. АВТОПОДТВЕРЖДЕНИЕ
+    if "подтвердите обмен" in text or "подтвердите" in text:
+        print(f"[DEBUG] Акк {acc_id} | Триггер ПОДТВЕРЖДЕНИЯ сработал!", flush=True)
+        await delay(1.0, 2.0)
+        if await click(client, message, "подтвердить"):
+            print(f"🎉 [Акк {acc_id}] Обмен подтверждён!", flush=True)
+        else:
+            print(f"⚠️ [Акк {acc_id}] Кнопка 'Подтвердить' не найдена!", flush=True)
+        return
+        
     # 2. АВТОГОТОВНОСТЬ
     if "готовность:" in text and "❌" in text and "✅" in text:
         print(f"[DEBUG] Акк {acc_id} | Триггер ГОТОВНОСТИ сработал!", flush=True)
