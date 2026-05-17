@@ -46,7 +46,7 @@ async def click(client, message, keyword: str) -> bool:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if keyword.lower() in btn.text.lower() or keyword.lower() in (btn.callback_data or "").lower():
-                    print(f"[КЛИК] Нажимаю кнопку: '{btn.text}' | data: '{btn.callback_data}'", flush=True)
+                    print(f"[КЛИК] Нажимаю кнопку: '{btn.text}'", flush=True)
                     try:
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
                         return True
@@ -56,11 +56,12 @@ async def click(client, message, keyword: str) -> bool:
         print(f"❌ Ошибка click(): {e}", flush=True)
     return False
 
-# --- ТУРБО-ДВИЖОК КЛИКОВ ---
+# ---УМНЫЙ ТУРБО-ДВИЖОК С АВТО-ВЫХОДОМ ИЗ ТУПИКОВ ---
 async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
     await asyncio.sleep(0.35)
     
-    for attempt in range(25):
+    # Снижаем до 8 попыток на шаг, чтобы не тупить долго в одном окне
+    for attempt in range(8):
         try:
             async for msg in client.get_chat_history(bot_chat, limit=1):
                 if not msg.reply_markup:
@@ -73,20 +74,35 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
                         await asyncio.sleep(0.2)
                         continue
 
+                # Если зависли на 4-й попытке в окне выбора подменю — жмем Назад для сброса лага
+                if attempt == 4 and pick_first:
+                    print(f"⚠️ [{step_name}] Похоже, бот завис или меню пустое. Пробую нажать 'Назад' для сброса...", flush=True)
+                    for row in msg.reply_markup.inline_keyboard:
+                        for btn in row:
+                            if "назад" in btn.text.lower() or "back" in (btn.callback_data or "").lower():
+                                try: await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=2)
+                                except: pass
+                                return False, fp
+
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         text_lower = btn.text.lower().strip()
                         data_lower = (btn.callback_data or "").lower().strip()
 
                         if pick_first:
-                            if "назад" not in text_lower and "back" not in data_lower and "изменить" not in text_lower:
-                                try: await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=2)
-                                except: pass
-                                return True, fp
+                            # Строгий фильтр: исключаем любые служебные кнопки при авто-выборе предмета
+                            if any(x in text_lower or x in data_lower for x in ["назад", "back", "изменить", "отмена", "подтвердить", "главное"]):
+                                continue
+                            
+                            print(f"🎯 [{step_name}] Авто-выбор первой доступной кнопки: [{btn.text}]", flush=True)
+                            try: await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=2)
+                            except: pass
+                            return True, fp
                         else:
                             for kw in keywords:
                                 kw_l = kw.lower().strip()
                                 if kw_l in text_lower or kw_l in data_lower:
+                                    print(f"🎯 [{step_name}] Найдена целевая кнопка! Нажимаю: [{btn.text}]", flush=True)
                                     try: await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=2)
                                     except: pass
                                     return True, fp
@@ -97,40 +113,54 @@ async def execute_menu_step(client, step_name, keywords, pick_first, last_fp):
     print(f"🛑 [{step_name}] Тайм-аут шага.", flush=True)
     return False, last_fp
 
-# --- ТУРБО СБОРЩИК Х10 ---
+# --- ТУРБО СБОРЩИК Х10 С ЗАЩИТОЙ ---
 async def receiver_trade_logic(client, acc_id):
     print(f"⚡ [Акк {acc_id}] Сборка x10 на максимальной скорости...", flush=True)
     
-    for item_index in range(1, 11):
+    item_index = 1
+    while item_index <= 10:
+        print(f"📱 [Акк {acc_id}] Добавление телефона {item_index}/10...", flush=True)
         last_fp = ""
 
         # Шаг 1: Добавить телефон
         res, last_fp = await execute_menu_step(client, f"Добавить телефон {item_index}", ["добавить телефон", "trade_add_phone"], False, last_fp)
-        if not res: break
+        if not res: 
+            # Если не смогли нажать кнопку добавления (например, инвентарь забит), завершаем цикл
+            break
 
         # Шаг 2: Выбор состояния
         res, last_fp = await execute_menu_step(client, f"Выбор Состояния {item_index}", [], True, last_fp)
-        if not res: return
+        if not res: 
+            # Если шаг провалился (или сбросился через Назад), пробуем этот же телефон заново
+            await asyncio.sleep(1.0)
+            continue
 
         # Шаг 3: Выбор редкости
         res, last_fp = await execute_menu_step(client, f"Выбор Редкости {item_index}", [], True, last_fp)
-        if not res: return
+        if not res: 
+            await asyncio.sleep(1.0)
+            continue
 
         # Шаг 4: Выбор модели
         res, last_fp = await execute_menu_step(client, f"Выбор Модели {item_index}", [], True, last_fp)
-        if not res: return
+        if not res: 
+            await asyncio.sleep(1.0)
+            continue
 
         # Шаг 5: Выбор количества (1 шт)
         res, last_fp = await execute_menu_step(client, f"Количество 1шт {item_index}", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
-        if not res: return
+        if not res: 
+            await asyncio.sleep(1.0)
+            continue
         
+        print(f"✅ [Акк {acc_id}] Телефон {item_index}/10 успешно добавлен.", flush=True)
+        item_index += 1
         await asyncio.sleep(0.4)
 
-    # Шаг 6: Финальное подтверждение добавления предметов твинком
-    print(f"⚖️ [Акк {acc_id}] Все 10 телефонов добавлены! Нажимаю Подтвердить...", flush=True)
+    # Шаг 6: Финальное подтверждение
+    print(f"⚖️ [Акк {acc_id}] Все возможные предметы добавлены! Нажимаю Подтвердить...", flush=True)
     res, last_fp = await execute_menu_step(client, "Финал Получателя", ["подтвердить", "trade_confirm"], False, "")
     
-    # СРАЗУ ПОСЛЕ СБОРКИ ЖМЕМ ГОТОВ
     if res:
         print(f"🚀 [Акк {acc_id}] Трейд собран! Жду 1.5 сек и принудительно жму 'Готов'...", flush=True)
         await asyncio.sleep(1.5)
@@ -147,7 +177,6 @@ async def process_bot_logic(client, message, acc_id):
 
     text = message.text.lower()
 
-    # 1. ПРИНЯТИЕ ОБМЕНА
     if "предложение обмена" in text or "пришло предложение" in text:
         if "ваше предложение обмена отправлено" in text:
             return
@@ -158,14 +187,12 @@ async def process_bot_logic(client, message, acc_id):
         asyncio.create_task(receiver_trade_logic(client, acc_id))
         return
 
-    # 2. АВТОГОТОВНОСТЬ ПРИ ЗАПОЛНЕНИИ СЛОТОВ (10/10 или изменение готовности)
     if ("готовность:" in text and "❌" in text and "✅" in text) or "занято слотов: 10/10" in text:
-        print(f"⚡ [Акк {acc_id}] Обнаружено заполнение слотов (10/10 или статус готовности)! Нажимаю 'Готов'...", flush=True)
+        print(f"⚡ [Акк {acc_id}] Обнаружено заполнение слотов! Нажимаю 'Готов'...", flush=True)
         await delay(0.2, 0.5)
         await click(client, message, "готов")
         return
 
-    # 3. АВТОПОДТВЕРЖДЕНИЕ СДЕЛКИ
     if "подтвердите обмен" in text or "подтвердите" in text:
         await delay(0.3, 0.6)
         await click(client, message, "подтвердить")
@@ -249,7 +276,7 @@ async def bg_tasks(client, acc_id):
 
 async def start_bot():
     global clients
-    print("🛠 Запуск Pyrofork турбо-фермы с авто-готовностью...", flush=True)
+    print("🛠 Запуск БЕЗОТКАЗНОЙ Pyrofork турбо-фермы...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -277,7 +304,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Режим авто-готовности (10/10) активен. Тестируй!", flush=True)
+    print("🚀 Безотказный режим запущен. Зависания устранены!", flush=True)
     while True:
         await asyncio.sleep(3600)
 
