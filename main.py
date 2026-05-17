@@ -120,7 +120,7 @@ async def manual_farm_logic(client, acc_id, mode="Ручной"):
     except Exception as e:
         print(f"❌ Ошибка сбора на акке {acc_id}: {e}", flush=True)
 
-# --- ТОТ САМЫЙ ВЧЕРАШНИЙ РАБОЧИЙ ОБРАБОТЧИК БОТА ---
+# --- МОДЕРНИЗИРОВАННЫЙ ОБРАБОТЧИК БОТА (БЕЗУПРЕЧНОЕ АВТОПРИНЯТИЕ) ---
 async def process_bot_logic(client, message):
     if not message.chat or not message.chat.username or message.chat.username.lower() != bot_chat.lower():
         return
@@ -131,21 +131,23 @@ async def process_bot_logic(client, message):
     if not message.text: return
     text = message.text.lower()
     
-    # Твоя вчерашняя безотказная логика проверки "свой-чужой" и автопринятия
+    # Срезаем точки, запятые и собачки, чтобы они не ломали поиск по именам
+    clean_text = text.replace(",", " ").replace(".", " ").replace("@", " ")
+    
+    try: acc_id = clients.index(client) + 1
+    except: acc_id = "Х"
+
+    # 1. Шаг: Принятие входящего трейда
     if "предложение обмена" in text or "пришло предложение" in text:
         is_from_farm = False
         for uname in my_usernames:
-            if uname in text:
+            if uname in clean_text:
                 is_from_farm = True
                 break
 
         if is_from_farm:
-            try: acc_id = clients.index(client) + 1
-            except: acc_id = "Х"
-                
             print(f"🤝 [Акк {acc_id}] Обнаружен внутренний обмен! Нажимаю Принять...", flush=True)
-            await asyncio.sleep(2) 
-            
+            await asyncio.sleep(1.5) 
             try:
                 if message.reply_markup:
                     for row in message.reply_markup.inline_keyboard:
@@ -161,10 +163,8 @@ async def process_bot_logic(client, message):
             except Exception as e:
                 print(f"❌ Не удалось нажать Принять на акке {acc_id}: {e}", flush=True)
 
-    # Автоготовность при заполнении слотов 10/10
+    # 2. Шаг: Автоготовность (когда слоты забиты 10/10 или партнер готов)
     elif "занято слотов: 10/10" in text or ("готовность:" in text and "❌" in text and "✅" in text):
-        try: acc_id = clients.index(client) + 1
-        except: acc_id = "Х"
         await asyncio.sleep(1.5)
         try:
             if message.reply_markup:
@@ -176,6 +176,20 @@ async def process_bot_logic(client, message):
                             return
         except Exception as e:
             print(f"❌ Не удалось нажать Готов на акке {acc_id}: {e}", flush=True)
+
+    # 3. Шаг: Финальное подтверждение обмена (если бот просит подтвердить)
+    elif "подтвердите обмен" in text or "подтвердите" in text:
+        await asyncio.sleep(1.5)
+        try:
+            if message.reply_markup:
+                for row in message.reply_markup.inline_keyboard:
+                    for btn in row:
+                        if "подтверд" in btn.text.lower() or (btn.callback_data and "trade_confirm" in btn.callback_data.lower()):
+                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data)
+                            print(f"🎉 [Акк {acc_id}] Трейд окончательно ПОДТВЕРЖДЕН!", flush=True)
+                            return
+        except Exception as e:
+            print(f"❌ Не удалось нажать Подтвердить на акке {acc_id}: {e}", flush=True)
 
 # Дублируем вызовы на новые и отредактированные сообщения от бота
 async def handle_bot_messages(client, message):
