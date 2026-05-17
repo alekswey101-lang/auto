@@ -382,7 +382,6 @@ async def start_bot():
             api_hash=API_HASH,
             session_string=session.strip(),
             in_memory=True,
-            receive_updates=True,
         )
         
         c.add_handler(handlers.MessageHandler(handle_my_messages))
