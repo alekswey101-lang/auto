@@ -390,28 +390,23 @@ async def start_bot():
         raw_clients.append((i + 1, c))
 
     for acc_num, c in raw_clients:
-    try:
-        await c.start()
-        clients.append(c)
-
-        me = await c.get_me()
-        c.me_id = me.id
-
-        # Принудительная синхронизация апдейтов
-        await c.get_dialogs(limit=5)
-
-        if me.first_name:
-            TRUSTED_NAMES.append(me.first_name.lower())
-        TRUSTED_NAMES.append(str(me.id))
-
-        print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | Имя: {me.first_name})", flush=True)
-        asyncio.create_task(bg_tasks(c, acc_num))
-    except Exception as e:
-        print(f"⚠️ [Ошибка] Аккаунт {acc_num} не запущен: {e}", flush=True)
+        try:
+            await c.start()
+            clients.append(c)
+            me = await c.get_me()
+            c.me_id = me.id
+            # Принудительная синхронизация апдейтов
+            await c.get_dialogs(limit=5)
+            if me.first_name:
+                TRUSTED_NAMES.append(me.first_name.lower())
+            TRUSTED_NAMES.append(str(me.id))
+            print(f"✅ Аккаунт {acc_num} успешно авторизован! (@{me.username} | Имя: {me.first_name})", flush=True)
+            asyncio.create_task(bg_tasks(c, acc_num))
+        except Exception as e:
+            print(f"⚠️ [Ошибка] Аккаунт {acc_num} не запущен: {e}", flush=True)
 
     TRUSTED_NAMES = list(set(TRUSTED_NAMES))
     print(f"💎 Белый список имен для распознавания трейдов: {TRUSTED_NAMES}", flush=True)
-
     while True:
         await asyncio.sleep(3600)
 
