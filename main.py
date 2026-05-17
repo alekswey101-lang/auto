@@ -9,11 +9,38 @@ from datetime import datetime, timezone, timedelta
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
 
-with open("accounts.json", "r", encoding="utf-8") as f:
-    accounts = json.load(f)
+# --- ЗАЩИЩЕННЫЙ МЕХАНИЗМ ЗАГРУЗКИ КОНФИГА ---
+if not os.path.exists("accounts.json"):
+    print("❌ КРИТИЧЕСКАЯ ОШИБКА: Файл 'accounts.json' не найден в корневой директории!", flush=True)
+    print("Убедись, что ты загрузил accounts.json на сервер вместе со скриптом.", flush=True)
+    sys.exit(1)
 
-BOT_NAME = sys.argv[1] if len(sys.argv) > 1 else "main"
-cfg = accounts.get(BOT_NAME, list(accounts.values())[0])
+with open("accounts.json", "r", encoding="utf-8") as f:
+    try:
+        accounts = json.load(f)
+    except Exception as e:
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось прочитать accounts.json. Ошибка в формате JSON: {e}", flush=True)
+        sys.exit(1)
+
+BOT_NAME = sys.argv[1] if len(sys.argv) > 1 else None
+
+if not BOT_NAME:
+    # Если аргумент не передан, автоматически берем самый первый аккаунт из файла
+    BOT_NAME = list(accounts.keys())[0]
+    print(f"⚠️ Аргумент имени бота не передан. Автоматически выбран первый аккаунт: '{BOT_NAME}'", flush=True)
+
+if BOT_NAME not in accounts:
+    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Аккаунт '{BOT_NAME}' не найден в accounts.json!", flush=True)
+    print(f"Доступные аккаунты в файле: {list(accounts.keys())}", flush=True)
+    sys.exit(1)
+
+cfg = accounts[BOT_NAME]
+
+# Проверяем наличие всех ключей в конфиге аккаунта
+for key in ["api_id", "api_hash", "session"]:
+    if key not in cfg:
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: В настройках аккаунта '{BOT_NAME}' отсутствует поле '{key}'!", flush=True)
+        sys.exit(1)
 
 API_ID = cfg["api_id"]
 API_HASH = cfg["api_hash"]
@@ -30,7 +57,6 @@ state = {
     "last_action_time": 0
 }
 
-# Словарь макросов для быстрого вызова обмена
 ACC_MACROS = {
     "1": "boymorale",
     "2": "tintedwindow",
@@ -64,7 +90,6 @@ def allow_action(min_delay=2):
     state["last_action_time"] = now()
     return True
 
-# Умный кликер: очищает кнопки от смайликов перед сравнением текста
 async def click(msg, name):
     if not getattr(msg, "reply_markup", None) or not getattr(msg.reply_markup, "inline_keyboard", None):
         return False
@@ -128,7 +153,6 @@ async def timer_loop():
                 del state["timers"][k]
         await asyncio.sleep(1)
 
-# --- ЕДИНЫЙ ПРОЦЕССОР ДЛЯ ЛОГИКИ ИГРОВОГО БОТА ---
 async def process_bot_logic(msg):
     text = (msg.text or msg.caption or "").lower()
     
@@ -155,7 +179,6 @@ async def process_bot_logic(msg):
             state["locks"]["containers"] = False
             state["timers"]["containers"] = 15
 
-    # --- НАДЕЖНЫЙ БЛОК АВТО-ТРЕЙДА ---
     if "предложение обмена" in text or "пришло предложение" in text:
         print("🤝 Обнаружен трейд, нажимаю Принять...", flush=True)
         await delay(1.0, 2.0)
@@ -171,45 +194,33 @@ async def process_bot_logic(msg):
         await delay(1.0, 2.0)
         await click(msg, "подтвердить")
 
-# Ловим новые сообщения от бота
 @app.on_message(filters.chat([TRADE_BOT, ROULETTE_BOT]))
 async def handle_new_messages(client, msg):
     await process_bot_logic(msg)
 
-# Ловим ОБНОВЛЕНИЯ сообщений от бота (для кнопок Готов и Подтвердить)
 @app.on_edited_message(filters.chat([TRADE_BOT, ROULETTE_BOT]))
 async def handle_edited_messages(client, msg):
     await process_bot_logic(msg)
 
-# --- ОБРАБОТЧИК ТВОИХ СЛОВЕСНЫХ КОМАНД (.t) ---
 @app.on_message(filters.me & filters.command(["t", "trade", "т"], prefixes=["."]))
 async def handle_my_trade_commands(client, msg):
     parts = msg.text.split()
     target = None
 
-    # 1. Если команда введена как .t 1, .t 2 и т.д.
     if len(parts) == 2 and parts[1] in ACC_MACROS:
         target = ACC_MACROS[parts[1]]
-    
-    # 2. Если это ответ на сообщение (.t репли)
     elif msg.reply_to_message and msg.reply_to_message.from_user:
         user = msg.reply_to_message.from_user
         target = user.username or str(user.id)
-    
-    # 3. Если указан юзернейм напрямую (.t @username)
     elif len(parts) >= 2:
         target = parts[1].replace("@", "").strip()
 
     if not target:
-        print("⚠️ Не удалось определить цель для обмена!", flush=True)
         return
 
-    # Удаляем твою словесную команду
     try: await msg.delete()
     except: pass
 
-    # Отправляем официальную команду в чат боту
-    print(f"📣 Инициирую трейд на {target}...", flush=True)
     bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
     await client.send_message(TRADE_BOT, bot_cmd)
 
@@ -220,16 +231,16 @@ async def console():
             cmd = cmd.strip().lower()
             if cmd == "stop":
                 state["running"] = False
-                print("Пауза")
+                print("Пауза", flush=True)
             elif cmd == "start":
                 state["running"] = True
-                print("Старт")
+                print("Старт", flush=True)
         except:
             await asyncio.sleep(5)
 
 async def main():
     await app.start()
-    print(f"🚀 Сессия {BOT_NAME} успешно запущена! Слушаю чаты и команды.", flush=True)
+    print(f"🚀 Сессия '{BOT_NAME}' успешно запущенна! Автопринятие и команды активны.", flush=True)
     asyncio.create_task(timer_loop())
     asyncio.create_task(container_loop())
     asyncio.create_task(tcard_loop())
