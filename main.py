@@ -2,7 +2,7 @@
 import os
 import asyncio
 import threading
-import random
+from datetime import datetime, timedelta, timezone
 from flask import Flask
 from pyrogram import Client, handlers, filters
 from pyrogram import raw
@@ -18,7 +18,7 @@ threading.Thread(
     daemon=True
 ).start()
 
-# --- CONFIG фермы ---
+# --- CONFIG ФЕРМЫ ---
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
@@ -63,27 +63,45 @@ async def persistent_click(client, message, keyword: str) -> bool:
         pass
     return False
 
-# --- ВЫБОР ХАРАКТЕРИСТИК (БЕРЕТ ПЕРВУЮ ДОСТУПНУЮ КНОПКУ-МОДЕЛЬ/КАЧЕСТВО) ---
+# --- АВТО-ВЫБОР ХАРАКТЕРИСТИК (УСИЛЕННЫЙ ЗАЩИТОЙ ОТ ОТМЕНЫ И НАЗАД) ---
 async def click_first_characteristic(client, message) -> bool:
     try:
         if not message or not message.reply_markup:
             return False
+            
+        # Черный список навигационных кнопок
+        black_list = [
+            "назад", "back", "изменить", "отмена", "cancel", "подтвердить", 
+            "главное", "готов", "меню", "menu", "⬅️", "❌", "✖️", "🔙", "exit", "выход"
+        ]
+
+        # 1. Приоритетный поиск явных игровых кнопок
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 text_lower = btn.text.lower().strip()
                 data_lower = (btn.callback_data or "").lower().strip()
-                # Игнорируем навигацию, чтобы не выйти назад в меню
-                if any(x in text_lower or x in data_lower for x in ["назад", "back", "изменить", "отмена", "подтвердить", "главное", "готов"]):
+                
+                if any(x in text_lower or x in data_lower for x in ["смартфон", "телефон", "обычн", "редк", "эпич", "легенд", "мифич", "фантом", "артефакт"]):
+                    for attempt in range(3):
+                        try:
+                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=4)
+                            return True
+                        except:
+                            await asyncio.sleep(0.15)
+                    return True
+
+        # 2. Обычный поиск, если явных маркеров нет (фильтруем по черному списку)
+        for row in message.reply_markup.inline_keyboard:
+            for btn in row:
+                text_lower = btn.text.lower().strip()
+                data_lower = (btn.callback_data or "").lower().strip()
+                
+                if any(x in text_lower or x in data_lower for x in black_list):
                     continue
                 
                 for attempt in range(3):
                     try:
-                        await client.request_callback_answer(
-                            chat_id=message.chat.id, 
-                            message_id=message.id, 
-                            callback_data=btn.callback_data,
-                            timeout=4
-                        )
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=4)
                         return True
                     except:
                         await asyncio.sleep(0.15)
@@ -92,20 +110,18 @@ async def click_first_characteristic(client, message) -> bool:
         pass
     return False
 
-# --- ПОШАГОВЫЙ ЛИНЕЙНЫЙ ДВИЖОК СБОРКИ (ПРОБИВАЕТ ЛАГИ КНОПОК) ---
+# --- ПОШАГОВЫЙ ЛИНЕЙНЫЙ ДВИЖОК СБОРКИ ПРЕДМЕТОВ ---
 async def receiver_trade_logic(client, acc_id):
-    print(f"⚡ [Акк {acc_id}] Трейд принят! Начинаю агрессивное продавливание кнопок...", flush=True)
+    print(f"⚡ [Акк {acc_id}] Трейд принят! Начинаю сборку телефонов...", flush=True)
     is_collecting[acc_id] = True  
     added_count = 0  
     
-    await asyncio.sleep(0.8) # Даем боту переварить принятие трейда
+    await asyncio.sleep(0.8) # Даем боту обновить экран после принятия трейда
     
-    # Запускаем 60 шагов (с запасом на пролаги бота)
     for step in range(60):
         if added_count >= 10:
             break
 
-        # Считываем ОДНО самое последнее сообщение из чата
         msg = None
         try:
             async for last_msg in client.get_chat_history(TRADE_BOT, limit=1):
@@ -124,7 +140,6 @@ async def receiver_trade_logic(client, acc_id):
             print(f"📥 [Акк {acc_id}] Слот заполнен (10/10) по тексту бота.")
             break
 
-        # Разбираем структуру текущего экрана
         all_callbacks = []
         all_texts = []
         for row in msg.reply_markup.inline_keyboard:
@@ -133,26 +148,25 @@ async def receiver_trade_logic(client, acc_id):
                 if btn.callback_data:
                     all_callbacks.append(btn.callback_data.lower())
 
-        # ШАГ 1: Экран трейда. Ищем заветную кнопку "Добавить телефон"
+        # ШАГ 1: Экран трейда. Ищем кнопку "Добавить телефон"
         if any("trade_add_phone" in cb for cb in all_callbacks) or any("добавить телефон" in tx for tx in all_texts):
-            print(f" Найдена кнопка добавления на Акке {acc_id}, жму...", flush=True)
+            print(f"📱 Найдена кнопка добавления на Акке {acc_id}, жму...", flush=True)
             if await persistent_click(client, msg, "trade_add_phone") or await persistent_click(client, msg, "добавить телефон"):
-                # Не используем continue! Даем коду упасть ниже и обновить паузу, чтобы не зацикливаться на старых данных
-                await asyncio.sleep(0.35)
+                await asyncio.sleep(0.5)
 
         # ШАГ 2: Финальный экран выбора количества "Добавить 1 шт."
         elif any("trade_add_single" in cb for cb in all_callbacks) or any("добавить 1 шт." in tx for tx in all_texts):
+            print(f"📦 Найдена кнопка количества на Акке {acc_id}, жму...", flush=True)
             if await persistent_click(client, msg, "trade_add_single") or await persistent_click(client, msg, "добавить 1 шт."):
                 added_count += 1
                 print(f"➕ [Акк {acc_id}] Успешно добавлен телефон №{added_count}", flush=True)
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.5)
 
-        # ШАГ 3: Промежуточный выбор характеристик телефона (Качество -> Редкость -> Модель)
+        # ШАГ 3: Выбор характеристик (Качество -> Редкость -> Модель) с защитой от "Назад"
         else:
             if await click_first_characteristic(client, msg):
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.4)
 
-    # Выходим из режима сборки предметов
     is_collecting[acc_id] = False
     print(f"⚖️ [Акк {acc_id}] Сборка предметов окончена ({added_count}/10). Закрываю сделку...", flush=True)
     
@@ -181,18 +195,18 @@ async def poll_bot_messages(client, acc_id):
 
                 text = msg.text.lower()
 
-                # Ловим трейд, только если аккаунт сейчас НЕ занят циклом сборки телефонов
+                # Ловим входящий трейд
                 if ("предложение обмена" in text or "пришло предложение" in text) and not is_collecting.get(acc_id, False):
                     if "ваше предложение обмена отправлено" not in text:
                         if msg.reply_markup and any("принять" in b.text.lower() for r in msg.reply_markup.inline_keyboard for b in r):
                             if await persistent_click(client, msg, "принять"):
                                 is_collecting[acc_id] = True
-                                # Запускаем логику сборки в фоне
                                 asyncio.create_task(receiver_trade_logic(client, acc_id))
 
                 if "подтвердите обмен" in text or "подтвердите" in text:
                     await persistent_click(client, msg, "подтвердить")
                 
+                # Логика для основы: кликаем готов/подтвердить, когда твинк заполнил слоты
                 if "готовность:" in text and text.count("✅") >= 1:
                     if current_bot_msg.get(acc_id) == "sender_waiting":
                         if await persistent_click(client, msg, "готов"):
@@ -242,14 +256,13 @@ async def handle_my_messages(client, message):
         await client.send_message(TRADE_BOT, bot_cmd)
 
 
-# --- ТКАРТОЧКА: ЦИКЛ КАЖДЫЕ 2 ЧАСА (КАК В ИСХОДНИКЕ) ---
+# --- ТКАРТОЧКА: ЦИКЛ КАЖДЫЕ 2 ЧАСА ---
 async def loop_cards_task(client, acc_id):
-    # Первичный пинг при запуске фермы
     try: await client.send_message(TRADE_BOT, "ткарточка")
     except: pass
     
     while True:
-        await asyncio.sleep(121 * 60) # Интервал 2 часа
+        await asyncio.sleep(121 * 60) # Интервал 2 часа и 1 минута
         try:
             await client.send_message(TRADE_BOT, "ткарточка")
             print(f"🃏 [Акк {acc_id}] Запрос 'ткарточка' отправлен по таймеру.", flush=True)
@@ -257,9 +270,8 @@ async def loop_cards_task(client, acc_id):
             pass
 
 
-# --- ТМАЙНИНГ: СБОР СТРОГО В 00:10 ПО МСК ---
+# --- ТМАЙНИНГ: СБОР ПРИБЫЛИ СТРОГО В 00:10 ПО МСК ---
 async def bg_tasks(client, acc_id):
-    from datetime import datetime, timezone, timedelta
     tz_moscow = timezone(timedelta(hours=3))
     already_done_today = False
 
@@ -288,9 +300,10 @@ async def bg_tasks(client, acc_id):
         await asyncio.sleep(30)
 
 
+# --- ЗАПУСК ВСЕХ КЛИЕНТОВ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы с усиленным кликером кнопок...", flush=True)
+    print("🛠 Запуск фермы со всеми обновлениями...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -321,7 +334,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка инициализации аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Все активные аккаунты запущены в режиме продавливания инлайн-меню!", flush=True)
+    print("🚀 Ферма полностью запущена на полную мощность!", flush=True)
     while True:
         await asyncio.sleep(3600)
 
