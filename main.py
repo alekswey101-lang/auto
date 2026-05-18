@@ -57,9 +57,9 @@ async def click(client, message, keyword: str) -> bool:
 async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, last_fp, ignore_fp_check=False):
     await asyncio.sleep(0.16)
     
-    # Запрещенный ТЕКСТ на кнопках (то, что видит юзер)
+    # Запрещенный ТЕКСТ на кнопках
     forbidden_text = ["назад", "back", "отмена", "cancel", "вернуться", "главное", "меню", "быстрый выбор", "⬅️", "🔙"]
-    # Точные совпадения для дата-коллабеков навигации (чтобы не забанить системные ID редкостей)
+    # Точные совпадения для дата-коллабеков навигации
     forbidden_data_exact = ["trade_refresh", "back", "cancel", "menu_main", "to_main"]
 
     for attempt in range(25):
@@ -71,7 +71,8 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
 
             fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
             
-            if not ignore_fp_check and "Добавить телефон" not in step_name:
+            # Контроль смены экранов
+            if not ignore_fp_check:
                 if last_fp and fp == last_fp:
                     if attempt > 0 and attempt % 6 == 0:
                         last_fp = "" 
@@ -83,19 +84,18 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
                     text_lower = btn.text.lower().strip()
                     data_lower = (btn.callback_data or "").lower().strip()
 
-                    # Фильтруем реальные кнопки "Назад" по тексту
+                    # Фильтруем кнопки "Назад"
                     if any(root in text_lower for root in forbidden_text):
                         continue
-                    # Фильтруем технические кнопки сброса/выхода по точному совпадению data
                     if any(x == data_lower for x in forbidden_data_exact):
                         continue
 
                     if pick_first:
-                        # Пропускаем финалку, если она вылезет раньше времени
+                        # Пропускаем финалку
                         if any(x in text_lower or x in data_lower for x in ["изменить", "подтвердить", "готов"]):
                             continue
                             
-                        # Жмем первую чистую кнопку (теперь редкости и модели проскочат без проблем)
+                        # Жмем первую чистую кнопку (модель / редкость / состояние)
                         try: 
                             await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
                         except: 
@@ -141,12 +141,12 @@ async def receiver_trade_logic(client, acc_id):
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Состояния", [], True, last_fp, ignore_fp_check=True)
         if not res: continue
 
-        # 3. Клик: Редкость (Защищено от ложной блокировки дата-тегов)
+        # 3. Клик: Редкость
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Редкости", [], True, last_fp, ignore_fp_check=True)
         if not res: continue
 
-        # 4. Клик: Модель
-        res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp, ignore_fp_check=True)
+        # 4. Клик: Модель (ВОЗВРАЩАЕМ ignore_fp_check=False, чтобы дождаться прогрузки названий телефонов)
+        res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp, ignore_fp_check=False)
         if not res: continue
 
         # 5. Клик: Добавить 1 шт
@@ -262,7 +262,7 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот активен! Фильтр редкостей перекалиброван.**")
+        try: await message.edit("🚀 **Юзербот активен! Тайминги моделей синхронизированы.**")
         except: pass
         return
 
@@ -294,7 +294,7 @@ async def bg_tasks(client, acc_id):
 
 async def start_bot():
     global clients
-    print("🛠 Старт фермы с точечной калибровкой инлайн-фильтров...", flush=True)
+    print("🛠 Старт фермы с фиксом тайминга прогрузки моделей...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -324,7 +324,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Безупречный скоростной режим запущен. Тестируй!", flush=True)
+    print("🚀 Скрипт готов к тесту! Названия телефонов теперь выбираются корректно.", flush=True)
     while True:
         await asyncio.sleep(3600)
 
