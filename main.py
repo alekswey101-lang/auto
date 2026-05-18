@@ -44,42 +44,47 @@ async def click(client, message, keyword: str) -> bool:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if keyword.lower() in btn.text.lower() or keyword.lower() in (btn.callback_data or "").lower():
-                    try:
-                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=1)
-                        return True
-                    except:
-                        return True
+                    if btn.callback_data:
+                        try:
+                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=1)
+                            return True
+                        except:
+                            return True
     except:
         pass
     return False
 
-# --- АБСОЛЮТНО ЖЕСТКИЙ ДВИЖОК КЛИКОВ ---
+# --- ИСПРАВЛЕННЫЙ ДВИЖОК КЛИКОВ БЕЗ ФАНТОМНЫХ СРАБАТЫВАНИЙ ---
 async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last_fp):
-    await asyncio.sleep(0.18)
+    await asyncio.sleep(0.2)  # Чуть увеличили паузу для стабильной прогрузки инлайна
     
     forbidden = ["назад", "back", "отмена", "cancel", "вернуться", "главное", "меню", "быстрый выбор", "быстрый", "⬅️", "🔙", "trade_refresh", "trade_fast_mode"]
 
-    for attempt in range(25):
+    for attempt in range(30):
         try:
             msg = current_bot_msg.get(acc_id)
             if not msg or not msg.reply_markup:
-                await asyncio.sleep(0.06)
+                await asyncio.sleep(0.08)
                 continue
 
             fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
             
             if "Добавить телефон" not in step_name:
                 if last_fp and fp == last_fp:
-                    if attempt > 0 and attempt % 6 == 0:
+                    if attempt > 0 and attempt % 5 == 0:
                         last_fp = "" 
-                    await asyncio.sleep(0.06)
+                    await asyncio.sleep(0.08)
                     continue
 
+            # Фильтруем кнопки
             valid_buttons = []
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
+                    if not btn.callback_data: # Пропускаем кнопки без дата-коллбеков (они ломают клики)
+                        continue
+                        
                     t_low = btn.text.lower().strip()
-                    d_low = (btn.callback_data or "").lower().strip()
+                    d_low = btn.callback_data.lower().strip()
                     
                     if any(x in t_low or x in d_low for x in forbidden):
                         continue
@@ -89,12 +94,13 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
                     valid_buttons.append(btn)
 
             if not valid_buttons:
-                await asyncio.sleep(0.06)
+                await asyncio.sleep(0.08)
                 continue
 
             if pick_best:
                 target_btn = None
                 
+                # Поиск редкостей
                 if step_name == "Выбор Редкости":
                     for priority_keyword in ["мистические", "редкие", "хроматические", "необычные", "арканы", "ширпотреб"]:
                         for btn in valid_buttons:
@@ -104,19 +110,23 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
                         if target_btn:
                             break
                 
+                # Для моделей или если ничего не нашлось — берем строго ПЕРВУЮ валидную кнопку (это 100% телефон)
                 if not target_btn:
                     target_btn = valid_buttons[0]
 
                 try: 
                     await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=1)
                     return True, fp
-                except:
-                    return True, fp
+                except Exception as e:
+                    # Если падает по таймауту или ошибке — даем циклу шанс нажать еще раз, не проскакиваем шаг!
+                    await asyncio.sleep(0.1)
+                    continue
 
             else:
+                # Обычный клик по тексту (Добавить телефон / Добавить 1 шт)
                 for btn in valid_buttons:
                     t_low = btn.text.lower().strip()
-                    d_low = (btn.callback_data or "").lower().strip()
+                    d_low = btn.callback_data.lower().strip()
                     
                     for kw in keywords:
                         if kw.lower().strip() in t_low or kw.lower().strip() in d_low:
@@ -124,16 +134,17 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
                                 await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
                                 return True, fp
                             except:
-                                return True, fp
+                                await asyncio.sleep(0.1)
+                                continue
         except:
             pass
-        await asyncio.sleep(0.06)
+        await asyncio.sleep(0.08)
             
     return False, last_fp
 
 # --- СБОРЩИК ПРЕДМЕТОВ Х10 ---
 async def receiver_trade_logic(client, acc_id):
-    print(f"⚡ [Акк {acc_id}] Запуск неуязвимого кликера...", flush=True)
+    print(f"⚡ [Акк {acc_id}] Запуск финального фикс-кликера...", flush=True)
     is_collecting[acc_id] = True  
     added_count = 0  
     
@@ -148,37 +159,42 @@ async def receiver_trade_logic(client, acc_id):
                 break
 
         last_fp = ""
+        # 1. Клик: Добавить телефон
         res, last_fp = await execute_menu_step(client, acc_id, "Добавить телефон", ["добавить телефон", "trade_add_phone"], False, last_fp)
         if not res: break
 
         last_fp = ""
+        # 2. Клик: Состояние
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Состояния", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
+        # 3. Клик: Редкость
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Редкости", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
+        # 4. Клик: Модель (Защищен от пустых callback_data)
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
+        # 5. Клик: Добавить 1 шт
         res, last_fp = await execute_menu_step(client, acc_id, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
         if res:
             added_count += 1  
-            print(f"➕ [Акк {acc_id}] Телефон №{added_count} добавлен в слот.", flush=True)
+            print(f"➕ [Акк {acc_id}] Телефон №{added_count} успешно добавлен в трейд.", flush=True)
         else:
             continue
 
     is_collecting[acc_id] = False
 
-    print(f"⚖️ [Акк {acc_id}] Набор завершен. Закрываю окна...", flush=True)
+    print(f"⚖️ [Акк {acc_id}] Набор завершен. Фиксирую сделку...", flush=True)
     for _ in range(10):
         msg = current_bot_msg.get(acc_id)
         if await click(client, msg, "готов"):
             break
-        await asyncio.sleep(0.26)
+        await asyncio.sleep(0.3)
 
     await asyncio.sleep(0.8)
 
@@ -186,20 +202,19 @@ async def receiver_trade_logic(client, acc_id):
         msg = current_bot_msg.get(acc_id)
         if await click(client, msg, "подтвердить"):
             break
-        await asyncio.sleep(0.26)
+        await asyncio.sleep(0.3)
 
 # --- МГНОВЕННЫЙ ОБРАБОТЧИК СОБЫТИЙ ---
 async def process_bot_logic(client, message, acc_id):
     if not message:
         return
 
-    # Логика автосбора ТМайнинга при получении меню фермы
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
+                if not btn.callback_data: continue
                 t_low = btn.text.lower()
-                d_low = (btn.callback_data or "").lower()
-                # Если бот выдал меню фермы, прожимаем сбор денег
+                d_low = btn.callback_data.lower()
                 if "собрать деньги" in t_low or "farm_claim" in d_low:
                     try:
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
@@ -290,7 +305,7 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот запущен! Автосбор ТМайнинга в 00:10 МСК активен.**")
+        try: await message.edit("🚀 **Юзербот запущен! Фикс прогрузки моделей активен.**")
         except: pass
         return
 
@@ -314,43 +329,36 @@ async def handle_my_messages(client, message):
 
 # --- УМНЫЙ ПЛАНИРОВЩИК ЗАДАЧ И АВТОСБОРА В 00:10 МСК ---
 async def bg_tasks(client, acc_id):
-    # Первичный запуск при старте скрипта
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
     
-    # Флаг, чтобы бот не отправлял команду несколько раз в течение одной и той же минуты 00:10
     claimed_today = False
     
     while True:
         try:
-            # Получаем текущее время UTC и переводим его в Московское (+3 часа)
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
             
-            # Проверяем, наступило ли время 00:10 по МСК
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
-                    print(f"⏰ [Акк {acc_id}] Наступило 00:10 по МСК! Отправляю команду на сбор майнинга...", flush=True)
+                    print(f"⏰ [Акк {acc_id}] Наступило 00:10 по МСК! Отправляю команду на сбор майнинг-фермы...", flush=True)
                     await client.send_message(bot_chat, "тмайнинг")
                     claimed_today = True
             else:
-                # Как только минута сменилась, сбрасываем флаг для следующего дня
                 if msk_now.hour == 0 and msk_now.minute == 11:
                     claimed_today = False
                     
-            # Каждые 2 часа отправляем "ткарточка" для поддержания активности
             if msk_now.minute == 0 and msk_now.hour % 2 == 0:
                 await client.send_message(bot_chat, "ткарточка")
                 
         except Exception as e:
             print(f"⚠️ [bg_tasks Ошибка]: {e}", flush=True)
             
-        # Проверяем время раз в 30 секунд
         await asyncio.sleep(30)
 
 async def start_bot():
     global clients
-    print("🛠 Старт фермы с поддержкой планировщика МСК времени...", flush=True)
+    print("🛠 Старт фермы с жесткой валидацией коллбеков...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -380,7 +388,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт полностью запущен! Сбор тмайнинга настроен на 00:10 ежедневно.", flush=True)
+    print("🚀 Код обновлен. Перезапускай скрипт на сервере и тестируй!", flush=True)
     while True:
         await asyncio.sleep(3600)
 
