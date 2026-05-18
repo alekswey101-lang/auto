@@ -53,13 +53,15 @@ async def click(client, message, keyword: str) -> bool:
         pass
     return False
 
-# --- ОБНОВЛЕННЫЙ ДВИЖОК С ЖЕСТКИМ КОРНЕВЫМ ФИЛЬТРОМ НАВИГАЦИИ ---
+# --- УМНЫЙ ДВИЖОК С ТОЧЕЧНЫМ ФИЛЬТРОМ НАВИГАЦИИ ---
 async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, last_fp, ignore_fp_check=False):
     await asyncio.sleep(0.16)
     
-    # Жесткий черный список (ищем как подстроку, то есть любое частичное совпадение)
-    forbidden_roots = ["назад", "back", "отмена", "cancel", "вернуться", "главное", "меню", "menu", "быстрый выбор", "быстрый", "⬅️", "🔙"]
-    
+    # Запрещенный ТЕКСТ на кнопках (то, что видит юзер)
+    forbidden_text = ["назад", "back", "отмена", "cancel", "вернуться", "главное", "меню", "быстрый выбор", "⬅️", "🔙"]
+    # Точные совпадения для дата-коллабеков навигации (чтобы не забанить системные ID редкостей)
+    forbidden_data_exact = ["trade_refresh", "back", "cancel", "menu_main", "to_main"]
+
     for attempt in range(25):
         try:
             msg = current_bot_msg.get(acc_id)
@@ -81,16 +83,19 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
                     text_lower = btn.text.lower().strip()
                     data_lower = (btn.callback_data or "").lower().strip()
 
-                    # КРИТИЧЕСКИЙ ФИЛЬТР: Проверяем, содержит ли кнопка запрещенные слова
-                    if any(root in text_lower for root in forbidden_roots) or any(root in data_lower for root in forbidden_roots):
+                    # Фильтруем реальные кнопки "Назад" по тексту
+                    if any(root in text_lower for root in forbidden_text):
+                        continue
+                    # Фильтруем технические кнопки сброса/выхода по точному совпадению data
+                    if any(x == data_lower for x in forbidden_data_exact):
                         continue
 
                     if pick_first:
-                        # Пропускаем финалку
+                        # Пропускаем финалку, если она вылезет раньше времени
                         if any(x in text_lower or x in data_lower for x in ["изменить", "подтвердить", "готов"]):
                             continue
                             
-                        # Кликаем по первой чистой кнопке (теперь это гарантированно модель телефона)
+                        # Жмем первую чистую кнопку (теперь редкости и модели проскочат без проблем)
                         try: 
                             await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
                         except: 
@@ -136,11 +141,11 @@ async def receiver_trade_logic(client, acc_id):
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Состояния", [], True, last_fp, ignore_fp_check=True)
         if not res: continue
 
-        # 3. Клик: Редкость
+        # 3. Клик: Редкость (Защищено от ложной блокировки дата-тегов)
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Редкости", [], True, last_fp, ignore_fp_check=True)
         if not res: continue
 
-        # 4. Клик: Модель (Защищено фильтром подстрок)
+        # 4. Клик: Модель
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp, ignore_fp_check=True)
         if not res: continue
 
@@ -257,7 +262,7 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот активен! Навигационные ловушки заблокированы.**")
+        try: await message.edit("🚀 **Юзербот активен! Фильтр редкостей перекалиброван.**")
         except: pass
         return
 
@@ -289,7 +294,7 @@ async def bg_tasks(client, acc_id):
 
 async def start_bot():
     global clients
-    print("🛠 Старт фермы с защитой от сложных навигационных кнопок...", flush=True)
+    print("🛠 Старт фермы с точечной калибровкой инлайн-фильтров...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -319,7 +324,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Корректный скоростной режим запущен! Проверяй.", flush=True)
+    print("🚀 Безупречный скоростной режим запущен. Тестируй!", flush=True)
     while True:
         await asyncio.sleep(3600)
 
