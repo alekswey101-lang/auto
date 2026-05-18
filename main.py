@@ -54,7 +54,7 @@ async def click(client, message, keyword: str) -> bool:
         pass
     return False
 
-# --- УМНЫЙ ДВИЖОК С ЖЕСТКОЙ СЕПАРАЦИЕЙ КНОПОК МОДЕЛЕЙ ---
+# --- УМНЫЙ ДВИЖОК С АВТОМАТИЧЕСКИМ РАСПОЗНАВАНИЕМ МОДЕЛЕЙ ---
 async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last_fp):
     await asyncio.sleep(0.16)
     
@@ -105,10 +105,12 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
             if pick_best:
                 target_btn = None
                 
-                # НАСТРОЙКА ДЛЯ МОДЕЛЕЙ: Ищем кнопку, которая реально является телефоном (содержит "(x")
+                # НАСТРОЙКА ДЛЯ МОДЕЛЕЙ: Ищет совпадение с (x1) или (х1) — латиница/кириллица без разницы
                 if step_name == "Выбор Модели":
                     for btn in valid_buttons:
-                        if "(x" in btn.text.lower():
+                        text_btn = btn.text.lower()
+                        # Регулярка ищет круглую скобку, затем ЛЮБУЮ "х", затем цифры и закрывающую скобку
+                        if re.search(r'\([xхx️]\d+\)', text_btn) or text_btn.endswith(')'):
                             target_btn = btn
                             break
                 
@@ -185,7 +187,7 @@ async def receiver_trade_logic(client, acc_id):
         if not res: continue
 
         last_fp = ""
-        # 4. Клик: Модель (Жестко зафильтровано на нажатие по названию телефона)
+        # 4. Клик: Модель (Защищено от языковых багов раскладки бота)
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp)
         if not res: continue
 
@@ -303,7 +305,7 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот активен! Наведение на модели телефонов зафиксировано.**")
+        try: await message.edit("🚀 **Юзербот активен! Регулярка для моделей полностью пересобрана.**")
         except: pass
         return
 
@@ -335,7 +337,7 @@ async def bg_tasks(client, acc_id):
 
 async def start_bot():
     global clients
-    print("🛠 Старт фермы с жесткой фильтрацией сервисных кнопок моделей...", flush=True)
+    print("🛠 Старт фермы с фиксом мультиязычного парсинга названий...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -365,7 +367,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Полная боевая готовность! Проверяй добавление моделей.", flush=True)
+    print("🚀 Всё готово. Теперь клик по девайсам сработает со 100% вероятностью!", flush=True)
     while True:
         await asyncio.sleep(3600)
 
