@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
-import re
 import asyncio
 import datetime
 import threading
-import random
 from flask import Flask
 from pyrogram import Client, handlers, filters
 from pyrogram import raw
@@ -55,14 +53,11 @@ async def click(client, message, keyword: str) -> bool:
         pass
     return False
 
-# --- УЛЬТРА-УМНЫЙ ДВИЖОК С ФИКСОМ ЭМОДЗИ ---
+# --- АБСОЛЮТНО ЖЕСТКИЙ ДВИЖОК КЛИКОВ ---
 async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last_fp):
-    await asyncio.sleep(0.16)
+    await asyncio.sleep(0.18)
     
-    # Запрещенный ТЕКСТ на кнопках
-    forbidden_text = ["назад", "back", "отмена", "cancel", "вернуться", "главное", "меню", "быстрый выбор", "быстрый", "⬅️", "🔙"]
-    # Точные совпадения для дата-коллабеков навигации
-    forbidden_data_exact = ["trade_refresh", "back", "cancel", "menu_main", "to_main", "trade_fast_mode"]
+    forbidden = ["назад", "back", "отмена", "cancel", "вернуться", "главное", "меню", "быстрый выбор", "быстрый", "⬅️", "🔙", "trade_refresh", "trade_fast_mode"]
 
     for attempt in range(25):
         try:
@@ -73,7 +68,6 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
 
             fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
             
-            # Контроль зависания на одном и том же меню
             if "Добавить телефон" not in step_name:
                 if last_fp and fp == last_fp:
                     if attempt > 0 and attempt % 6 == 0:
@@ -82,74 +76,55 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
                     continue
 
             valid_buttons = []
-
-            # Фильтруем и собираем только чистые кнопки характеристик/моделей
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
-                    text_lower = btn.text.lower().strip()
-                    data_lower = (btn.callback_data or "").lower().strip()
-
-                    if any(root in text_lower for root in forbidden_text):
+                    t_low = btn.text.lower().strip()
+                    d_low = (btn.callback_data or "").lower().strip()
+                    
+                    if any(x in t_low or x in d_low for x in forbidden):
                         continue
-                    if any(x == data_lower for x in forbidden_data_exact):
+                    if any(x in t_low or x in d_low for x in ["изменить", "подтвердить", "готов"]):
                         continue
-                    if any(x in text_lower or x in data_lower for x in ["изменить", "подтвердить", "готов"]):
-                        continue
-
+                        
                     valid_buttons.append(btn)
 
             if not valid_buttons:
                 await asyncio.sleep(0.06)
                 continue
 
-            # Если активирован выбор лучшего/автовыбор
             if pick_best:
                 target_btn = None
                 
-                # НАСТРОЙКА ДЛЯ МОДЕЛЕЙ: Ищет совпадение с количеством в конце строки
-                if step_name == "Выбор Модели":
-                    for btn in valid_buttons:
-                        text_btn = btn.text.lower()
-                        if re.search(r'\([xхx️]\d+\)', text_btn) or text_btn.endswith(')'):
-                            target_btn = btn
+                if step_name == "Выбор Редкости":
+                    for priority_keyword in ["мистические", "редкие", "хроматические", "необычные", "арканы", "ширпотреб"]:
+                        for btn in valid_buttons:
+                            if priority_keyword in btn.text.lower():
+                                target_btn = btn
+                                break
+                        if target_btn:
                             break
                 
-                # НАСТРОЙКА ДЛЯ РЕДКОСТЕЙ: Абсолютно неуязвимый поиск максимума (игнорирует эмодзи)
-                elif step_name == "Выбор Редкости":
-                    max_count = -1
-                    for btn in valid_buttons:
-                        # Ищем любые цифры, зажатые в круглые скобки в любой части текста кнопки
-                        match = re.search(r'\((\d+)\)', btn.text)
-                        if match:
-                            count = int(match.group(1))
-                            if count > max_count:
-                                max_count = count
-                                target_btn = btn
-
-                # Если цифры не спарсились (или вылетел баг) — берем СЛУЧАЙНУЮ кнопку из доступных, чтобы не залипать на ширпе!
                 if not target_btn:
-                    target_btn = random.choice(valid_buttons)
+                    target_btn = valid_buttons[0]
 
                 try: 
                     await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=1)
-                except: 
-                    pass
-                return True, fp
+                    return True, fp
+                except:
+                    return True, fp
 
             else:
-                # Обычный точечный клик (Добавить телефон / Добавить 1 шт)
                 for btn in valid_buttons:
-                    text_lower = btn.text.lower().strip()
-                    data_lower = (btn.callback_data or "").lower().strip()
+                    t_low = btn.text.lower().strip()
+                    d_low = (btn.callback_data or "").lower().strip()
                     
                     for kw in keywords:
-                        kw_l = kw.lower().strip()
-                        if kw_l in text_lower or kw_l in data_lower:
-                            try: 
+                        if kw.lower().strip() in t_low or kw.lower().strip() in d_low:
+                            try:
                                 await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
-                            except: 
-                                pass
-                            return True, fp
+                                return True, fp
+                            except:
+                                return True, fp
         except:
             pass
         await asyncio.sleep(0.06)
@@ -158,7 +133,7 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
 
 # --- СБОРЩИК ПРЕДМЕТОВ Х10 ---
 async def receiver_trade_logic(client, acc_id):
-    print(f"⚡ [Акк {acc_id}] Начинаю умный сбор предметов...", flush=True)
+    print(f"⚡ [Акк {acc_id}] Запуск неуязвимого кликера...", flush=True)
     is_collecting[acc_id] = True  
     added_count = 0  
     
@@ -173,43 +148,37 @@ async def receiver_trade_logic(client, acc_id):
                 break
 
         last_fp = ""
-        # 1. Клик: Добавить телефон
         res, last_fp = await execute_menu_step(client, acc_id, "Добавить телефон", ["добавить телефон", "trade_add_phone"], False, last_fp)
         if not res: break
 
         last_fp = ""
-        # 2. Клик: Состояние
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Состояния", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
-        # 3. Клик: Редкость (Теперь на 100% выберет Редкие/Мистические, где по 16-17 штук)
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Редкости", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
-        # 4. Клик: Модель
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
-        # 5. Клик: Добавить 1 шт
         res, last_fp = await execute_menu_step(client, acc_id, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
         if res:
             added_count += 1  
-            print(f"➕ [Акк {acc_id}] Успешно добавлен телефон №{added_count}", flush=True)
+            print(f"➕ [Акк {acc_id}] Телефон №{added_count} добавлен в слот.", flush=True)
         else:
             continue
 
     is_collecting[acc_id] = False
 
-    # Финал сделки
-    print(f"⚖️ [Акк {acc_id}] Лимит собран. Перехожу к фиксации...", flush=True)
+    print(f"⚖️ [Акк {acc_id}] Набор завершен. Закрываю окна...", flush=True)
     for _ in range(10):
         msg = current_bot_msg.get(acc_id)
         if await click(client, msg, "готов"):
             break
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.26)
 
     await asyncio.sleep(0.8)
 
@@ -217,11 +186,29 @@ async def receiver_trade_logic(client, acc_id):
         msg = current_bot_msg.get(acc_id)
         if await click(client, msg, "подтвердить"):
             break
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.26)
 
 # --- МГНОВЕННЫЙ ОБРАБОТЧИК СОБЫТИЙ ---
 async def process_bot_logic(client, message, acc_id):
-    if not message or not message.text:
+    if not message:
+        return
+
+    # Логика автосбора ТМайнинга при получении меню фермы
+    if message.reply_markup:
+        for row in message.reply_markup.inline_keyboard:
+            for btn in row:
+                t_low = btn.text.lower()
+                d_low = (btn.callback_data or "").lower()
+                # Если бот выдал меню фермы, прожимаем сбор денег
+                if "собрать деньги" in t_low or "farm_claim" in d_low:
+                    try:
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
+                        print(f"💰 [Акк {acc_id}] Деньги с ТМайнинга успешно собраны!", flush=True)
+                        return
+                    except:
+                        pass
+
+    if not message.text:
         return
 
     text = message.text.lower()
@@ -235,7 +222,7 @@ async def process_bot_logic(client, message, acc_id):
                 async for fresh_msg in client.get_chat_history(bot_chat, limit=1):
                     if fresh_msg.reply_markup:
                         if await click(client, fresh_msg, "принять"):
-                            print(f"✅ [Акк {acc_id}] Входящий трейд принят моментально!", flush=True)
+                            print(f"✅ [Акк {acc_id}] Входящий трейд принят!", flush=True)
                             await asyncio.sleep(0.2)
                             asyncio.create_task(receiver_trade_logic(client, acc_id))
                             return
@@ -273,19 +260,16 @@ async def poll_bot_messages(client, acc_id):
 
 # --- ОСНОВА ---
 async def sender_confirm_logic(client, acc_id):
-    print(f"⏳ [Акк {acc_id} - Основа] Ожидаю завершения сборки предметов твинком...", flush=True)
-    
+    print(f"⏳ [Акк {acc_id} - Основа] Ожидаю фиксации предметов твинком...", flush=True)
     for _ in range(120):
         await asyncio.sleep(0.4)
         try:
             msg = current_bot_msg.get(acc_id)
             if not msg or not msg.text:
                 continue
-                
             text = msg.text.lower()
-            
             if "готовность:" in text and text.count("✅") >= 1:
-                print(f"✍️ [Акк {acc_id} - Основа] Твинк зафиксировал инвентарь. Закрываю сделку...", flush=True)
+                print(f"✍️ [Акк {acc_id} - Основа] Твинк готов. Завершаю трейд...", flush=True)
                 await click(client, msg, "готов")
                 await asyncio.sleep(0.8)
                 await click(client, msg, "подтвердить")
@@ -306,7 +290,7 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот активен! Баг с эмодзи в редкостях полностью исправлен.**")
+        try: await message.edit("🚀 **Юзербот запущен! Автосбор ТМайнинга в 00:10 МСК активен.**")
         except: pass
         return
 
@@ -328,17 +312,45 @@ async def handle_my_messages(client, message):
         await client.send_message(bot_chat, bot_cmd)
         asyncio.create_task(sender_confirm_logic(client, acc_id))
 
+# --- УМНЫЙ ПЛАНИРОВЩИК ЗАДАЧ И АВТОСБОРА В 00:10 МСК ---
 async def bg_tasks(client, acc_id):
+    # Первичный запуск при старте скрипта
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
+    
+    # Флаг, чтобы бот не отправлял команду несколько раз в течение одной и той же минуты 00:10
+    claimed_today = False
+    
     while True:
-        await asyncio.sleep(121 * 60)
-        try: await client.send_message(bot_chat, "ткарточка")
-        except: pass
+        try:
+            # Получаем текущее время UTC и переводим его в Московское (+3 часа)
+            utc_now = datetime.datetime.utcnow()
+            msk_now = utc_now + datetime.timedelta(hours=3)
+            
+            # Проверяем, наступило ли время 00:10 по МСК
+            if msk_now.hour == 0 and msk_now.minute == 10:
+                if not claimed_today:
+                    print(f"⏰ [Акк {acc_id}] Наступило 00:10 по МСК! Отправляю команду на сбор майнинга...", flush=True)
+                    await client.send_message(bot_chat, "тмайнинг")
+                    claimed_today = True
+            else:
+                # Как только минута сменилась, сбрасываем флаг для следующего дня
+                if msk_now.hour == 0 and msk_now.minute == 11:
+                    claimed_today = False
+                    
+            # Каждые 2 часа отправляем "ткарточка" для поддержания активности
+            if msk_now.minute == 0 and msk_now.hour % 2 == 0:
+                await client.send_message(bot_chat, "ткарточка")
+                
+        except Exception as e:
+            print(f"⚠️ [bg_tasks Ошибка]: {e}", flush=True)
+            
+        # Проверяем время раз в 30 секунд
+        await asyncio.sleep(30)
 
 async def start_bot():
     global clients
-    print("🛠 Старт фермы с полной очисткой кнопок от эмодзи-символов...", flush=True)
+    print("🛠 Старт фермы с поддержкой планировщика МСК времени...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -368,7 +380,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Код обновлен. Запускай обмены, теперь он точно заберет Редкие и Мистические!", flush=True)
+    print("🚀 Скрипт полностью запущен! Сбор тмайнинга настроен на 00:10 ежедневно.", flush=True)
     while True:
         await asyncio.sleep(3600)
 
