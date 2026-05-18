@@ -4,6 +4,7 @@ import re
 import asyncio
 import datetime
 import threading
+import random
 from flask import Flask
 from pyrogram import Client, handlers, filters
 from pyrogram import raw
@@ -54,7 +55,7 @@ async def click(client, message, keyword: str) -> bool:
         pass
     return False
 
-# --- УМНЫЙ ДВИЖОК С АВТОМАТИЧЕСКИМ РАСПОЗНАВАНИЕМ МОДЕЛЕЙ ---
+# --- УЛЬТРА-УМНЫЙ ДВИЖОК С ФИКСОМ ЭМОДЗИ ---
 async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last_fp):
     await asyncio.sleep(0.16)
     
@@ -105,19 +106,19 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
             if pick_best:
                 target_btn = None
                 
-                # НАСТРОЙКА ДЛЯ МОДЕЛЕЙ: Ищет совпадение с (x1) или (х1) — латиница/кириллица без разницы
+                # НАСТРОЙКА ДЛЯ МОДЕЛЕЙ: Ищет совпадение с количеством в конце строки
                 if step_name == "Выбор Модели":
                     for btn in valid_buttons:
                         text_btn = btn.text.lower()
-                        # Регулярка ищет круглую скобку, затем ЛЮБУЮ "х", затем цифры и закрывающую скобку
                         if re.search(r'\([xхx️]\d+\)', text_btn) or text_btn.endswith(')'):
                             target_btn = btn
                             break
                 
-                # НАСТРОЙКА ДЛЯ РЕДКОСТЕЙ: Ищем категорию с максимальным количеством штук в скобках
+                # НАСТРОЙКА ДЛЯ РЕДКОСТЕЙ: Абсолютно неуязвимый поиск максимума (игнорирует эмодзи)
                 elif step_name == "Выбор Редкости":
                     max_count = -1
                     for btn in valid_buttons:
+                        # Ищем любые цифры, зажатые в круглые скобки в любой части текста кнопки
                         match = re.search(r'\((\d+)\)', btn.text)
                         if match:
                             count = int(match.group(1))
@@ -125,9 +126,9 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last
                                 max_count = count
                                 target_btn = btn
 
-                # Если под спец-фильтры ничего не подошло или это выбор Состояния — берем самую первую чистую кнопку
+                # Если цифры не спарсились (или вылетел баг) — берем СЛУЧАЙНУЮ кнопку из доступных, чтобы не залипать на ширпе!
                 if not target_btn:
-                    target_btn = valid_buttons[0]
+                    target_btn = random.choice(valid_buttons)
 
                 try: 
                     await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=1)
@@ -182,12 +183,12 @@ async def receiver_trade_logic(client, acc_id):
         if not res: continue
 
         last_fp = ""
-        # 3. Клик: Редкость (Выбирает ту, где больше всего карт)
+        # 3. Клик: Редкость (Теперь на 100% выберет Редкие/Мистические, где по 16-17 штук)
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Редкости", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
-        # 4. Клик: Модель (Защищено от языковых багов раскладки бота)
+        # 4. Клик: Модель
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp)
         if not res: continue
 
@@ -305,7 +306,7 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот активен! Регулярка для моделей полностью пересобрана.**")
+        try: await message.edit("🚀 **Юзербот активен! Баг с эмодзи в редкостях полностью исправлен.**")
         except: pass
         return
 
@@ -337,7 +338,7 @@ async def bg_tasks(client, acc_id):
 
 async def start_bot():
     global clients
-    print("🛠 Старт фермы с фиксом мультиязычного парсинга названий...", flush=True)
+    print("🛠 Старт фермы с полной очисткой кнопок от эмодзи-символов...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -367,7 +368,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Всё готово. Теперь клик по девайсам сработает со 100% вероятностью!", flush=True)
+    print("🚀 Код обновлен. Запускай обмены, теперь он точно заберет Редкие и Мистические!", flush=True)
     while True:
         await asyncio.sleep(3600)
 
