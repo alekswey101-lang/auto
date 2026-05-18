@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import re
 import asyncio
 import datetime
 import threading
@@ -53,8 +54,8 @@ async def click(client, message, keyword: str) -> bool:
         pass
     return False
 
-# --- УМНЫЙ ДВИЖОК С РЕВЕРСИВНЫМ ВЫБОРОМ ХАРАКТЕРИСТИК (СНИЗУ ВВЕРХ) ---
-async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, last_fp):
+# --- УМНЫЙ ДВИЖОК С АНАЛИЗОМ КОЛИЧЕСТВА ПРЕДМЕТОВ В СКОБКАХ ---
+async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last_fp):
     await asyncio.sleep(0.16)
     
     # Запрещенный ТЕКСТ на кнопках
@@ -71,7 +72,7 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
 
             fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
             
-            # Контроль лагов бота внутри одного шага
+            # Локальный контроль подвисания страницы
             if "Добавить телефон" not in step_name:
                 if last_fp and fp == last_fp:
                     if attempt > 0 and attempt % 6 == 0:
@@ -79,48 +80,67 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
                     await asyncio.sleep(0.06)
                     continue
 
-            # Для автовыбора (Состояние, Редкость, Модель) разворачиваем ряды кнопок СНИЗУ ВВЕРХ
-            rows = list(msg.reply_markup.inline_keyboard)
-            if pick_first:
-                rows.reverse()
+            valid_buttons = []
 
-            for row in rows:
-                # Внутри строки кнопки тоже перебираем справа налево (с конца)
-                buttons = list(row)
-                if pick_first:
-                    buttons.reverse()
-
-                for btn in buttons:
+            # Собираем только чистые игровые кнопки
+            for row in msg.reply_markup.inline_keyboard:
+                for btn in row:
                     text_lower = btn.text.lower().strip()
                     data_lower = (btn.callback_data or "").lower().strip()
 
-                    # Жесткая фильтрация кнопок возврата/навигации
                     if any(root in text_lower for root in forbidden_text):
                         continue
                     if any(x == data_lower for x in forbidden_data_exact):
                         continue
+                    if any(x in text_lower or x in data_lower for x in ["изменить", "подтвердить", "готов"]):
+                        continue
 
-                    if pick_first:
-                        # Игнорируем кнопки завершения трейда
-                        if any(x in text_lower or x in data_lower for x in ["изменить", "подтвердить", "готов"]):
-                            continue
-                            
-                        # Жмем кнопку (теперь это лучшая редкость / доступная модель)
-                        try: 
-                            await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
-                        except: 
-                            pass
-                        return True, fp
-                    else:
-                        # Точечный поиск по ключевым словам ("Добавить телефон", "Добавить 1 шт.")
-                        for kw in keywords:
-                            kw_l = kw.lower().strip()
-                            if kw_l in text_lower or kw_l in data_lower:
-                                try: 
-                                    await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
-                                except: 
-                                    pass
-                                return True, fp
+                    valid_buttons.append(btn)
+
+            if not valid_buttons:
+                await asyncio.sleep(0.06)
+                continue
+
+            # Если это выбор категории (Состояние / Редкость / Модель)
+            if pick_best:
+                target_btn = None
+                
+                # Если мы на этапе выбора редкости, ищем кнопку с МАКСИМАЛЬНЫМ числом в скобках
+                if step_name == "Выбор Редкости":
+                    max_count = -1
+                    for btn in valid_buttons:
+                        # Ищем цифры внутри скобок, например: (16)
+                        match = re.search(r'\((\d+)\)', btn.text)
+                        if match:
+                            count = int(match.group(1))
+                            if count > max_count:
+                                max_count = count
+                                target_btn = btn
+                    
+                # Если под алгоритм с цифрами ничего не подошло или это другой шаг — берем просто первую доступную
+                if not target_btn:
+                    target_btn = valid_buttons[0]
+
+                try: 
+                    await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=1)
+                except: 
+                    pass
+                return True, fp
+
+            else:
+                # Точечный клик по ключевым словам (Добавить телефон / Добавить 1 шт)
+                for btn in valid_buttons:
+                    text_lower = btn.text.lower().strip()
+                    data_lower = (btn.callback_data or "").lower().strip()
+                    
+                    for kw in keywords:
+                        kw_l = kw.lower().strip()
+                        if kw_l in text_lower or kw_l in data_lower:
+                            try: 
+                                await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
+                            except: 
+                                pass
+                            return True, fp
         except:
             pass
         await asyncio.sleep(0.06)
@@ -129,7 +149,7 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
 
 # --- СБОРЩИК ПРЕДМЕТОВ Х10 ---
 async def receiver_trade_logic(client, acc_id):
-    print(f"⚡ [Акк {acc_id}] Начинаю скоростной сбор предметов...", flush=True)
+    print(f"⚡ [Акк {acc_id}] Начинаю умный сбор предметов...", flush=True)
     is_collecting[acc_id] = True  
     added_count = 0  
     
@@ -148,19 +168,18 @@ async def receiver_trade_logic(client, acc_id):
         res, last_fp = await execute_menu_step(client, acc_id, "Добавить телефон", ["добавить телефон", "trade_add_phone"], False, last_fp)
         if not res: break
 
-        # Сбрасываем слепки перед каждым экраном для чистоты переключения
         last_fp = ""
-        # 2. Клик: Состояние (Выберет нижнее в списке)
+        # 2. Клик: Состояние
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Состояния", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
-        # 3. Клик: Редкость (Теперь выберет ЛУЧШУЮ редкость снизу списка вместо ширпотреба!)
+        # 3. Клик: Редкость (Автоматически выберет ту, где БОЛЬШЕ ВСЕГО телефонов)
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Редкости", [], True, last_fp)
         if not res: continue
 
         last_fp = ""
-        # 4. Клик: Модель (Выберет доступный телефон из этой редкости)
+        # 4. Клик: Модель
         res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp)
         if not res: continue
 
@@ -278,7 +297,7 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот активен! Включен умный реверс-выбор (снизу вверх).**")
+        try: await message.edit("🚀 **Юзербот активен! Включен интеллектуальный парсинг объемов инвентаря.**")
         except: pass
         return
 
@@ -310,7 +329,7 @@ async def bg_tasks(client, acc_id):
 
 async def start_bot():
     global clients
-    print("🛠 Старт фермы с реверсивным алгоритмом поиска кнопок...", flush=True)
+    print("🛠 Старт фермы с математическим выбором категорий...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -340,7 +359,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Реверсивный скоростной режим запущен! Теперь он нагребет твои лучшие телефоны.", flush=True)
+    print("🚀 Сверхразумный автоматический режим запущен! Запускай обмены.", flush=True)
     while True:
         await asyncio.sleep(3600)
 
