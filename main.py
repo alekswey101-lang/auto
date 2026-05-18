@@ -53,13 +53,13 @@ async def click(client, message, keyword: str) -> bool:
         pass
     return False
 
-# --- ВЫСОКОТЕХНОЛОГИЧНЫЙ ДВИЖОК ПРОБИВАНИЯ ЛАГОВ БОТА (С ИСПРАВЛЕННОЙ ФИЛЬТРАЦИЕЙ) ---
-async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, last_fp):
+# --- ИСПРАВЛЕННЫЙ ДВИЖОК ПРОБИВАНИЯ МЕНЮ БЕЗ ЛОЖНЫХ ЗАВИСАНИЙ ---
+async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, last_fp, ignore_fp_check=False):
     # Оптимальная микро-пауза для стабильной генерации меню игровым ботом
     await asyncio.sleep(0.16)
     
-    # Списки исключений: то, что нажимать НЕЛЬЗЯ ни при каких условиях (кнопки возврата)
-    forbidden_text = ["назад", "back", "отмена", "cancel", "вернуться назад", "главное", "меню", "menu", "⬅️", "🔙"]
+    # Жесткий список кнопок возврата, которые мы не нажмем никогда
+    forbidden_text = ["назад", "back", "отмена", "cancel", "вернуться", "главное", "меню", "menu", "⬅️", "🔙"]
     
     for attempt in range(25):
         try:
@@ -70,12 +70,11 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
 
             fp = "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row])
             
-            # Если бот прислал то же самое меню (лагает)
-            if "Добавить телефон" not in step_name:
+            # Если включена проверка слепков и мы НЕ на этапе переключения похожих экранов
+            if not ignore_fp_check and "Добавить телефон" not in step_name:
                 if last_fp and fp == last_fp:
-                    # Если бот завис на 6 тиков, "пинаем" его повторным запросом
                     if attempt > 0 and attempt % 6 == 0:
-                        last_fp = "" # Сбрасываем слепок, чтобы пробить лаг
+                        last_fp = "" # Сброс при реальном затупе бота
                     await asyncio.sleep(0.06)
                     continue
 
@@ -84,25 +83,25 @@ async def execute_menu_step(client, acc_id, step_name, keywords, pick_first, las
                     text_lower = btn.text.lower().strip()
                     data_lower = (btn.callback_data or "").lower().strip()
 
-                    # КРИТИЧЕСКИЙ ФИЛЬТР: Если это кнопка «Назад» (включая маскировку под trade_refresh) — жестко её скипаем
+                    # Фильтруем любые попытки нажать "Назад"
                     if any(x in text_lower for x in forbidden_text):
                         continue
                     if "trade_refresh" in data_lower and any(x in text_lower for x in ["назад", "вернуться", "⬅️"]):
                         continue
 
                     if pick_first:
-                        # Системные кнопки финала обмена при автовыборе характеристик пропускаем
+                        # Пропускаем системные кнопки фиксации трейда
                         if any(x in text_lower or x in data_lower for x in ["изменить", "подтвердить", "готов"]):
                             continue
                             
-                        # Прожимаем ПЕРВУЮ валидную кнопку характеристики (Состояние / Редкость / Модель)
+                        # Жмем самую первую доступную опцию характеристик
                         try: 
                             await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
                         except: 
                             pass
                         return True, fp
                     else:
-                        # Точечный поиск по ключевым словам для "Добавить телефон" и "Добавить 1 шт."
+                        # Точечные клики (Добавить телефон / Добавить 1 шт)
                         for kw in keywords:
                             kw_l = kw.lower().strip()
                             if kw_l in text_lower or kw_l in data_lower:
@@ -134,24 +133,24 @@ async def receiver_trade_logic(client, acc_id):
                 break
 
         last_fp = ""
-        # 1. Клик: Добавить телефон
-        res, last_fp = await execute_menu_step(client, acc_id, "Добавить телефон", ["добавить телефон", "trade_add_phone"], False, last_fp)
+        # 1. Клик: Добавить телефон (обычная проверка)
+        res, last_fp = await execute_menu_step(client, acc_id, "Добавить телефон", ["добавить телефон", "trade_add_phone"], False, last_fp, ignore_fp_check=False)
         if not res: break
 
-        # 2. Клик: Состояние (Рабочие / Сломанные)
-        res, last_fp = await execute_menu_step(client, acc_id, "Выбор Состояния", [], True, last_fp)
+        # 2. Клик: Состояние (Игнорируем совпадение слепков с главным меню)
+        res, last_fp = await execute_menu_step(client, acc_id, "Выбор Состояния", [], True, last_fp, ignore_fp_check=True)
         if not res: continue
 
-        # 3. Клик: Редкость
-        res, last_fp = await execute_menu_step(client, acc_id, "Выбор Редкости", [], True, last_fp)
+        # 3. Клик: Редкость (Игнорируем совпадение слепков с окном Состояния)
+        res, last_fp = await execute_menu_step(client, acc_id, "Выбор Редкости", [], True, last_fp, ignore_fp_check=True)
         if not res: continue
 
-        # 4. Клик: Модель
-        res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp)
+        # 4. Клик: Модель (Игнорируем совпадение слепков с окном Редкостей)
+        res, last_fp = await execute_menu_step(client, acc_id, "Выбор Модели", [], True, last_fp, ignore_fp_check=True)
         if not res: continue
 
-        # 5. Клик: Добавить 1 шт
-        res, last_fp = await execute_menu_step(client, acc_id, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False, last_fp)
+        # 5. Клик: Добавить 1 шт (обычная проверка)
+        res, last_fp = await execute_menu_step(client, acc_id, "Количество 1шт", ["добавить 1 шт.", "trade_add_single"], False, last_fp, ignore_fp_check=False)
         if res:
             added_count += 1  
             print(f"➕ [Акк {acc_id}] Успешно добавлен телефон №{added_count}", flush=True)
@@ -263,7 +262,7 @@ async def handle_my_messages(client, message):
     except: acc_id = 1
 
     if cmd == ".ping":
-        try: await message.edit("🚀 **Юзербот активен! Ложные выходы устранены.**")
+        try: await message.edit("🚀 **Юзербот активен! Логика слепков оптимизирована под окна редкостей.**")
         except: pass
         return
 
@@ -295,7 +294,7 @@ async def bg_tasks(client, acc_id):
 
 async def start_bot():
     global clients
-    print("🛠 Старт фермы на высокоскоростном движке с точечной фильтрацией...", flush=True)
+    print("🛠 Старт фермы с обходом ложных совпадений окон характеристик...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -325,7 +324,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скоростной режим с защитой от ложных выходов запущен!", flush=True)
+    print("🚀 Скоростной режим без ложных зависаний на редкостях запущен!", flush=True)
     while True:
         await asyncio.sleep(3600)
 
