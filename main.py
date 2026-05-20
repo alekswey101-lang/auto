@@ -77,93 +77,105 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- АБСОЛЮТНО ВСЕЯДНЫЙ И СКОРОСТНОЙ АВТОСБОР ДЛЯ ТВИНКОВ ---
+# ---УМНЫЙ ПОШАГОВЫЙ СБОРЩИК С ЗАЩИТОЙ ОТ ПОВТОРНЫХ КЛИКОВ ---
 async def twink_collect_logic(client, acc_id):
-    print(f"⚡ [Твинк {acc_id}] Запуск всеядного автосбора 10 телефонов...", flush=True)
+    print(f"⚡ [Твинк {acc_id}] Запуск пошагового автосбора без повторных кликов...", flush=True)
     
+    last_menu_fingerprint = ""  # Здесь храним слепок кнопок, чтобы не нажимать одно и то же дважды
+
     for tick in range(150):
         try:
-            # Берем актуальное сообщение из чата бота
+            # Получаем самое свежее сообщение
             msg = None
             async for m in client.get_chat_history(bot_chat, limit=1):
                 msg = m
                 break
 
             if not msg or not msg.reply_markup:
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.3)
                 continue
 
             text = msg.text.lower() if msg.text else ""
 
-            # Проверка лимита 10/10 телефонов в слотах
+            # Проверяем лимит трейда 10/10
             if "10/10" in text or ("слот" in text and "0/" not in text and "1/" not in text and "2/" not in text and "3/" not in text):
-                print(f"⚖️ [Твинк {acc_id}] В трейде набрано 10/10! Завершаю автосбор.", flush=True)
+                print(f"⚖️ [Твинк {acc_id}] В трейде набрано 10/10 предметов! Выхожу.", flush=True)
                 break
 
-            # 1. Если мы в главном меню трейда — жмем добавить
+            # Создаем уникальный отпечаток текущего экрана бота (текст всех кнопок вместе)
+            current_fingerprint = f"{msg.id}_" + "|".join([btn.text for row in msg.reply_markup.inline_keyboard for btn in row if btn.callback_data])
+            
+            # Если бот ЕЩЕ НЕ ОБНОВИЛ меню и перед нами старый экран — просто ждем и не кликаем!
+            if current_fingerprint == last_menu_fingerprint:
+                await asyncio.sleep(0.2)
+                continue
+
+            # 1. Если мы в главном меню трейда — нажимаем кнопку добавления
             if has_button(msg, "trade_add_phone") or has_button(msg, "добавить телефон"):
+                last_menu_fingerprint = current_fingerprint
                 await click(client, msg, "trade_add_phone")
                 await click(client, msg, "добавить телефон")
-                await asyncio.sleep(0.25)
+                await asyncio.sleep(0.4)
                 continue
 
-            # 2. Если бот просит выбрать количество 1 шт. — это финал круга добавления
+            # 2. Если бот просит выбрать количество 1 шт. — завершаем круг добавления
             if has_button(msg, "trade_add_single") or has_button(msg, "добавить 1 шт."):
+                last_menu_fingerprint = current_fingerprint
                 await click(client, msg, "trade_add_single")
                 await click(client, msg, "добавить 1 шт.")
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.5)  # Пауза побольше, чтобы бот успел вернуть в главное меню
                 continue
 
-            # 3. ВСЕЯДНЫЙ ВЫБОР ДЛЯ ПОДМЕНЮ (Состояние -> Редкость -> Модель)
-            # Собираем абсолютно все кнопки на экране
+            # 3. Фильтруем инлайн-кнопки (убираем навигационный мусор назад/отмена)
             all_buttons = []
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
                     if btn.callback_data:
                         all_buttons.append(btn)
 
-            # Отфильтровываем ТОЛЬКО навигационный мусор, чтобы случайно не нажать "Назад"
             valid_buttons = []
             for btn in all_buttons:
                 t_low = btn.text.lower().strip()
                 d_low = btn.callback_data.lower().strip()
 
-                # Нам нельзя нажимать назад, отмену или кнопки готовности во время сбора
                 if any(x in t_low or x in d_low for x in ["назад", "back", "отмена", "cancel", "главное", "меню", "⬅️", "🔙"]): continue
                 if any(x in d_low for x in ["trade_confirm", "trade_ready", "trade_change", "trade_refresh"]): continue
                 
                 valid_buttons.append(btn)
 
-            # Если есть хоть какие-то рабочие кнопки (состояния, редкости, модели)
+            # 4. Делаем клик по первому доступному элементу (выбор состояния, редкости или модели)
             if valid_buttons:
                 target_btn = valid_buttons[0]
                 
-                # Небольшой умный приоритет: если это шаг редкостей, попробуем забрать мифический/редкий
+                # Умный приоритет для шага редкостей
                 for btn in valid_buttons:
                     if "мистические" in btn.text.lower() or "редкие" in btn.text.lower():
                         target_btn = btn
                         break
                 
-                # Кликаем вперед и только вперед, игнорируя шаги назад
+                # Запоминаем этот экран, чтобы не кликнуть сюда повторно
+                last_menu_fingerprint = current_fingerprint
+                
                 try:
                     await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=1)
                 except:
                     pass
-                await asyncio.sleep(0.3)
+                
+                await asyncio.sleep(0.4)  # Даем боту время обновить интерфейс
                 continue
 
         except Exception as e:
-            print(f"⚠️ Микро-ошибка в автосборе твинка {acc_id}: {e}", flush=True)
+            print(f"⚠️ Ошибка в цикле автосбора твинка {acc_id}: {e}", flush=True)
         
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
-    print(f"⚖️ [Твинк {acc_id}] Сбор завершен. Жду твоего клика 'Готов' на твинке...", flush=True)
+    print(f"⚖️ [Твинк {acc_id}] Сбор окончен. Жду твоей ручной готовности на твинке.", flush=True)
 
 # --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
 async def process_bot_logic(client, message, acc_id):
     if not message: return
 
-    # Автосбор прибыли с ТМайнинга для всех аккаунтов фермы
+    # Автосбор ТМайнинга для всех аккаунтов
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
@@ -183,7 +195,7 @@ async def process_bot_logic(client, message, acc_id):
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                print(f"✅ [Твинк {acc_id}] Принял трейд. Включаю всеядный сборщик предметов...", flush=True)
+                print(f"✅ [Твинк {acc_id}] Принял трейд. Запускаю безопасный сборщик...", flush=True)
                 asyncio.create_task(twink_collect_logic(client, acc_id))
         return
 
@@ -191,18 +203,16 @@ async def process_bot_logic(client, message, acc_id):
     if "предложение обмена" in text or "пришло предложение" in text:
         if "ваше предложение обмена отправлено" in text: return
         if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-            print(f"✅ [ОСНОВА - Акк 2] Приняла трейд. Жду, пока твинк соберет предметы и ты нажмешь 'Готов'...", flush=True)
+            print(f"✅ [ОСНОВА - Акк 2] Приняла трейд. Ожидаю готовности твинка...", flush=True)
         return
 
     if "❌" in text or "✅" in text:
-        # Если твинк нажал готов (появилась галочка ✅), а у Основы висит активная кнопка готовности
         if "✅" in text and (has_button(message, "готов") or has_button(message, "trade_ready")):
             print(f"⚡ [ОСНОВА - Акк 2] Твинк готов! Нажимаю 'Готов' на основе...", flush=True)
             await click(client, message, "trade_ready")
             await click(client, message, "готов")
             return
 
-        # Финальное подтверждение сделки кнопкой
         if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
             print(f"🔗 [ОСНОВА - Акк 2] Нажимаю финальное 'Подтвердить'!", flush=True)
             await click(client, message, "trade_confirm")
@@ -214,7 +224,7 @@ async def process_bot_logic(client, message, acc_id):
             await click(client, message, "trade_confirm")
             await click(client, message, "подтвердить")
 
-# --- ХЕНДЛЕР ТЕКСТОВЫХ КОМАНД (.t и .ping) ---
+# --- ХЕНДЛЕР ТЕКСТОВЫХ КОМАНД ---
 async def handle_my_messages(client, message):
     if not message.text: return
     
@@ -284,7 +294,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск полностью реактивной фермы. Аккаунт 2 выставлен как ОСНОВА.", flush=True)
+    print("🛠 Запуск фермы. Аккаунт 2 — выделенная основа.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -327,7 +337,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт готов на 100%! Ставь на хостинг и проверяй в игре.", flush=True)
+    print("🚀 Скрипт успешно запущен с защитой от флуд-кликов кнопок!", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
