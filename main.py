@@ -271,26 +271,7 @@ async def process_my_commands(client, message, acc_id):
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
 
-# --- НАСТРОЙКА ХЕНДЛЕРОВ СКОРОСТИ И КОМАНД ---
-async def setup_speed_handlers(client, acc_id):
-    # Хендлер на новые сообщения от игрового бота
-    @client.on_message(filters.chat(bot_chat))
-    async def on_new_msg(c, m):
-        current_bot_msg[acc_id] = m
-        await process_bot_logic(c, m, acc_id)
-
-    # Хендлер на изменение сообщений игровым ботом (кнопки/текст)
-    @client.on_edited_message(filters.chat(bot_chat))
-    async def on_edited_msg(c, m):
-        current_bot_msg[acc_id] = m
-        await process_bot_logic(c, m, acc_id)
-
-    # Хендлер на ТВОИ СОБСТВЕННЫЕ сообщения (команды .t и .ping)
-    @client.on_message(filters.me)
-    async def on_my_msg(c, m):
-        await process_my_commands(c, m, acc_id)
-
-# --- ФОН ЗАДАЧИ (БЕЗ ИЗМЕНЕНИЙ) ---
+# --- ФОН ЗАДАЧИ ---
 async def bg_tasks(client, acc_id):
     await asyncio.sleep(5)
     try: await client.send_message(bot_chat, "ткарточка")
@@ -330,7 +311,7 @@ async def bg_tasks(client, acc_id):
 # --- ЗАПУСК ---
 async def start_bot():
     global clients
-    print("🛠 Старт фермы на максимальной скорости с фиксом команд...", flush=True)
+    print("🛠 Старт фермы с разделением групп хендлеров...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -354,14 +335,32 @@ async def start_bot():
 
             is_collecting[i+1] = False
             
-            # Регистрируем все скоростные хендлеры и команды в одном месте
-            await setup_speed_handlers(c, i+1)
+            acc_id = i + 1
+
+            # --- ЖЕСТКАЯ ПРЯМАЯ РЕГИСТРАЦИЯ ХЕНДЛЕРОВ ПО ГРУППАМ ---
             
-            asyncio.create_task(bg_tasks(c, i+1))
+            # Группа 0: Только сообщения и изменения от игрового бота (Скорость)
+            c.add_handler(handlers.MessageHandler(
+                lambda client, message: process_bot_logic(client, message, acc_id),
+                filters.chat(bot_chat)
+            ), group=0)
+
+            c.add_handler(handlers.EditedMessageHandler(
+                lambda client, message: process_bot_logic(client, message, acc_id),
+                filters.chat(bot_chat)
+            ), group=0)
+
+            # Группа 1: Только ТВОИ команды (.t / .ping), полностью изолированные от чата бота
+            c.add_handler(handlers.MessageHandler(
+                lambda client, message: process_my_commands(client, message, acc_id),
+                filters.me
+            ), group=1)
+            
+            asyncio.create_task(bg_tasks(c, acc_id))
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Все модули и команды .т успешно работают!", flush=True)
+    print("🚀 Все модули автоматизации и команды .т успешно запущены и разделены!", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
