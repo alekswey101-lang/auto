@@ -222,21 +222,17 @@ async def process_bot_logic(client, message, acc_id):
             asyncio.create_task(receiver_trade_logic(client, acc_id))
         return
 
-    # Если аккаунт прямо сейчас занят добавлением телефонов — не трогаем кнопки готовности
     if is_collecting.get(acc_id, False):
         return
 
     # 3. УНИВЕРСАЛЬНЫЙ ТРИГГЕР ДЛЯ НАЖАТИЯ ГОТОВ / ПОДТВЕРДИТЬ
-    # Если в сообщении есть индикаторы обмена (❌ или ✅)
     if "❌" in text or "✅" in text:
-        # Если основа готова (появился хотя бы один ✅), а у твинка на экране ВСЁ ЕЩЕ горит кнопка готовности
         if "✅" in text and (has_button(message, "готов") or has_button(message, "trade_ready")):
             print(f"✍️ [Акк {acc_id}] Твинк увидел готовность основы. Кликаю 'Готов'!", flush=True)
             await click(client, message, "trade_ready")
             await click(client, message, "готов")
             return
 
-        # Если вылезла кнопка финального подтверждения сделки — бьем по ней моментально
         if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
             print(f"🔗 [Акк {acc_id}] Кликаю 'Подтвердить'!", flush=True)
             await click(client, message, "trade_confirm")
@@ -318,7 +314,7 @@ async def bg_tasks(client, acc_id):
 # --- ЗАПУСК ---
 async def start_bot():
     global clients
-    print("🛠 Перезапуск фермы со сквозным контролем состояний...", flush=True)
+    print("🛠 Перезапуск фермы с фиксом замыкания хендлеров...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -344,20 +340,19 @@ async def start_bot():
             
             acc_id = i + 1
 
-            # Группа 0: Обработка сообщений бота (входящие апдейты и изменения кнопок)
+            # ФИКС: Используем явную передачу a_id=acc_id внутри лямбды, чтобы избежать перезаписи
             c.add_handler(handlers.MessageHandler(
-                lambda client, message: process_bot_logic(client, message, acc_id),
+                lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
                 filters.chat(bot_chat)
             ), group=0)
 
             c.add_handler(handlers.EditedMessageHandler(
-                lambda client, message: process_bot_logic(client, message, acc_id),
+                lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
                 filters.chat(bot_chat)
             ), group=0)
 
-            # Группа 1: Твои собственные команды (полностью изолированы)
             c.add_handler(handlers.MessageHandler(
-                lambda client, message: process_my_commands(client, message, acc_id),
+                lambda client, message, a_id=acc_id: process_my_commands(client, message, a_id),
                 filters.me
             ), group=1)
             
@@ -365,7 +360,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Все системы выровнены. Команды и кликер активны!", flush=True)
+    print("🚀 Все системы выровнены. Команды .т работают, кликер наготове!", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
