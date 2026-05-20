@@ -293,6 +293,17 @@ async def receiver_trade_logic(client, acc_id):
 
         await asyncio.sleep(0.3)
 
+# --- АВТОМАТИЧЕСКИЙ ОТВЕТ НА ГОТОВНОСТЬ ---
+async def respond_to_ready(client, message, acc_id):
+    # Мелкий зазор во избежание конфликтов анимаций бота
+    await asyncio.sleep(0.2)
+    print(f"✍️ [Акк {acc_id}] Замечена готовность партнера! Нажимаю 'Готов'...", flush=True)
+    await click(client, message, "готов")
+    
+    # Ждём изменения статуса на подтверждение
+    await asyncio.sleep(0.8)
+    await click(client, message, "подтвердить")
+
 # --- ОБРАБОТЧИК СОБЫТИЙ ---
 async def process_bot_logic(client, message, acc_id):
     if not message:
@@ -326,12 +337,11 @@ async def process_bot_logic(client, message, acc_id):
 
     text = message.text.lower()
 
-    # 2. ИСПРАВЛЕННОЕ АВТОПРИНЯТИЕ ТРЕЙДА
+    # 2. РАБОЧЕЕ АВТОПРИНЯТИЕ ВХОДЯЩЕГО ТРЕЙДА
     if "предложение обмена" in text or "пришло предложение" in text:
         if "ваше предложение обмена отправлено" in text:
             return
 
-        # Нажимаем «Принять» прямо на пришедшем сообщении (без медленных get_chat_history)
         if await click(client, message, "принять"):
             print(f"✅ [Акк {acc_id}] Входящий трейд успешно принят!", flush=True)
             await asyncio.sleep(0.2)
@@ -340,7 +350,16 @@ async def process_bot_logic(client, message, acc_id):
             )
         return
 
-    # 3. Подтверждение со стороны твинка / основы
+    # 3. АВТОПРОЖАТИЕ ГАЛОЧКИ «ГОТОВ» (Следим за обновлением сообщения)
+    if "отдает вам:" in text or "занято слотов:" in text:
+        # Если в тексте сообщения есть фраза "Готовность: ✅" у первого игрока,
+        # а у текущего аккаунта кнопка "Готов" ещё доступна для нажатия
+        if "готовность: ✅" in text:
+            # Запускаем задачу авто-ответа, чтобы не вешать основной поток пулинга
+            asyncio.create_task(respond_to_ready(client, message, acc_id))
+            return
+
+    # 4. Подтверждение финального этапа обмена
     if "подтвердите обмен" in text or "подтвердите" in text:
         await click(client, message, "подтвердить")
         return
@@ -376,30 +395,10 @@ async def poll_bot_messages(client, acc_id):
 
         await asyncio.sleep(0.15)
 
-# --- ОСНОВА ---
+# --- ОСНОВА (ДЛЯ ОЖИДАНИЯ АВТО-ТРЕЙДОВ) ---
 async def sender_confirm_logic(client, acc_id):
-    print(f"⏳ [Акк {acc_id} - Основа] Ожидаю фиксации предметов твинком...", flush=True)
-
-    for _ in range(120):
-        await asyncio.sleep(0.4)
-
-        try:
-            msg = current_bot_msg.get(acc_id)
-
-            if not msg or not msg.text:
-                continue
-
-            text = msg.text.lower()
-
-            if "готовность:" in text and text.count("✅") >= 1:
-                print(f"✍️ [Акк {acc_id} - Основа] Твинк готов. Завершаю трейд...", flush=True)
-
-                await click(client, msg, "готов")
-                await asyncio.sleep(0.8)
-                await click(client, msg, "подтвердить")
-                break
-        except:
-            pass
+    print(f"⏳ [Акк {acc_id} - Инициатор] Трейд отправлен. Ожидаю авто-сбора твинка...", flush=True)
+    # Эта функция просто выводит инфо, всю рутину теперь делает автоматический обработчик в process_bot_logic
 
 async def handle_my_messages(client, message):
     if not message.text:
@@ -462,16 +461,13 @@ async def handle_my_messages(client, message):
 
 # --- ФОН ЗАДАЧ ---
 async def bg_tasks(client, acc_id):
-    # Плавный прогрев сессии на старте
     await asyncio.sleep(5)
 
-    # Стартовая команда активности
     try:
         await client.send_message(bot_chat, "ткарточка")
     except:
         pass
 
-    # Старт Iris Moon для 1 и 2 аккаунта
     if acc_id in [1, 2]:
         try:
             print(f"🌙 [Акк {acc_id}] Стартовый запуск фармы в Iris Moon...", flush=True)
@@ -487,7 +483,6 @@ async def bg_tasks(client, acc_id):
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
-            # --- ТМАЙНИНГА СБОР ---
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
                     print(f"⏰ [Акк {acc_id}] 00:10 МСК -> тмайнинг", flush=True)
@@ -497,7 +492,6 @@ async def bg_tasks(client, acc_id):
                 if msk_now.hour == 0 and msk_now.minute == 11:
                     claimed_today = False
 
-            # --- IRIS MOON КАЖДЫЕ 4 ЧАСА ДЛЯ 1 И 2 АККА ---
             if acc_id in [1, 2]:
                 iris_timer += 1
 
@@ -509,21 +503,19 @@ async def bg_tasks(client, acc_id):
                         print(f"⚠️ [Акк {acc_id}] Ошибка Iris Moon: {e}", flush=True)
                     iris_timer = 0
 
-            # --- ПОДДЕРЖАНИЕ АКТИВНОСТИ ---
             if msk_now.minute == 0 and msk_now.hour % 2 == 0:
                 await client.send_message(bot_chat, "ткарточка")
 
         except Exception as e:
             print(f"⚠️ [bg_tasks Ошибка на Акк {acc_id}]: {e}", flush=True)
 
-    # Весь цикл bg_tasks проверяет условия раз в минуту
         await asyncio.sleep(60)
 
 # --- ЗАПУСК ---
 async def start_bot():
     global clients
 
-    print("🛠 Старт фермы с автофармой Iris Moon...", flush=True)
+    print("🛠 Старт фермы с автофармой Iris Moon и авто-подтверждением...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "":
