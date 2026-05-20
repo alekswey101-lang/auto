@@ -78,7 +78,7 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- ТЕХНИЧЕСКИЙ АВТОСБОР ПО CALLBACK DATA (СТРОГИЙ ВЫХОД) ---
+# --- ТЕХНИЧЕСКИЙ АВТОСБОР ПО CALLBACK DATA (АНТИ-ПЕТЛЯ) ---
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Запуск технического автосбора по Callback Data...", flush=True)
     
@@ -86,31 +86,37 @@ async def twink_collect_logic(client, acc_id):
 
     for tick in range(150):
         try:
-            # Запрашиваем самое свежее сообщение
-            msg = None
-            async for m in client.get_chat_history(bot_chat, limit=1):
-                msg = m
-                break
+            # Получаем последние 2 сообщения из истории, чтобы знать, что было шагом ранее
+            history = []
+            async for m in client.get_chat_history(bot_chat, limit=2):
+                history.append(m)
 
+            if not history:
+                await asyncio.sleep(0.2)
+                continue
+
+            msg = history[0] # Текущее открытое сообщение
             if not msg or not msg.reply_markup:
                 await asyncio.sleep(0.2)
                 continue
 
             text = msg.text.lower() if msg.text else ""
 
-            # Изолируем проверку слотов: ищем именно "занято слотов: 10/10"
+            # Проверяем, забиты ли слоты (ищем в текущем или в предыдущем сообщении)
             slots_full = False
-            if "занято слотов: 10/10" in text:
-                slots_full = True
+            for h_msg in history:
+                if h_msg and h_msg.text and "занято слотов: 10/10" in h_msg.text.lower():
+                    slots_full = True
+                    break
 
-            # ЕСЛИ СЛОТЫ ЗАБИТЫ (10/10)
+            # ЕСЛИ МЫ ЗНАЕМ, ЧТО УЖЕ НАБРАНО 10/10 ПРЕДМЕТОВ
             if slots_full:
-                # 1. Если мы застряли в подменю (где есть кнопка назад) — принудительно выходим
+                # Если бот скинул нас в подменю или окно состояния (где есть кнопка назад) — принудительно выходим!
                 back_button_found = False
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         if "вернуться назад" in btn.text.lower() or "назад" in btn.text.lower():
-                            print(f"⚖️ [Твинк {acc_id}] В трейде 10/10 предметов! Выхожу из подменю...", flush=True)
+                            print(f"⚖️ [Твинк {acc_id}] Слоты забиты (10/10), но бот открыл подменю. Нажимаю 'Вернуться назад' для выхода...", flush=True)
                             await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
                             back_button_found = True
                             break
@@ -120,20 +126,19 @@ async def twink_collect_logic(client, acc_id):
                     await asyncio.sleep(0.5)
                     continue
 
-                # 2. Если кнопки "Назад" нет, значит мы в Главном Меню трейда — жмем Готов
+                # Если мы в Главном Меню трейда — жмем Готов
                 if has_button(msg, "готов"):
-                    print(f"⚡ [Твинк {acc_id}] Трейд заполнен (10/10). Нажимаю 'Готов' и ЗАВЕРШАЮ сбор!", flush=True)
+                    print(f"⚡ [Твинк {acc_id}] Трейд успешно заполнен (10/10). Нажимаю 'Готов'!", flush=True)
                     await click(client, msg, "готов")
-                    return # СТРОГИЙ ВЫХОД ИЗ ФУНКЦИИ, чтобы не нажать ничего лишнего!
+                    return # Полный выход из функции автосбора!
 
-                # Если кнопки "Готов" нет (например, уже нажата), но слоты полные — тоже завершаем поток
                 if "готовность: ✅" in text:
-                    print(f"✨ [Твинк {acc_id}] Кнопка 'Готов' уже была успешно принята ботом. Выхожу.", flush=True)
+                    print(f"✨ [Твинк {acc_id}] Кнопка 'Готов' успешно зафиксирована. Завершаю поток.", flush=True)
                     return
                 
                 continue
 
-            # --- СБОР ПРЕДМЕТОВ (ЕСЛИ ЕЩЕ НЕ 10/10) ---
+            # --- ОБЫЧНЫЙ СБОР ПРЕДМЕТОВ (ЕСЛИ ЕЩЕ НЕ 10/10) ---
             buttons = []
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
@@ -149,7 +154,7 @@ async def twink_collect_logic(client, acc_id):
                 c_data = btn.callback_data.lower()
                 b_text = btn.text.lower()
 
-                # Игнорируем системные кнопки навигации во время набора телефонов
+                # Игнорируем навигацию во время сбора
                 if any(x in c_data or x in b_text for x in ["назад", "back", "cancel", "отмена", "главное", "меню", "⬅️", "🔙"]): 
                     continue
                 if any(x in c_data for x in ["trade_confirm", "trade_ready", "trade_change", "trade_refresh"]): 
@@ -347,7 +352,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Аккаунт 2 — ОСНОВА. Фикс перекликов 'Готов' применен.", flush=True)
+    print("🛠 Запуск фермы. Исправлена проверка сквозной истории подменю.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -390,7 +395,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт успешно обновлен и запущен!", flush=True)
+    print("🚀 Скрипт полностью готов и запущен! Теперь выйдет из любого подменю.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
