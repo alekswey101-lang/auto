@@ -298,6 +298,7 @@ async def process_bot_logic(client, message, acc_id):
     if not message:
         return
 
+    # 1. Автосбор ТМайнинга по inline-кнопкам
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
@@ -315,7 +316,6 @@ async def process_bot_logic(client, message, acc_id):
                             btn.callback_data,
                             timeout=2
                         )
-
                         print(f"💰 [Акк {acc_id}] Деньги с ТМайнинга успешно собраны!", flush=True)
                         return
                     except:
@@ -326,31 +326,21 @@ async def process_bot_logic(client, message, acc_id):
 
     text = message.text.lower()
 
+    # 2. ИСПРАВЛЕННОЕ АВТОПРИНЯТИЕ ТРЕЙДА
     if "предложение обмена" in text or "пришло предложение" in text:
         if "ваше предложение обмена отправлено" in text:
             return
 
-        for _ in range(10):
-            try:
-                async for fresh_msg in client.get_chat_history(bot_chat, limit=1):
-                    if fresh_msg.reply_markup:
-                        if await click(client, fresh_msg, "принять"):
-                            print(f"✅ [Акк {acc_id}] Входящий трейд принят!", flush=True)
-
-                            await asyncio.sleep(0.2)
-
-                            asyncio.create_task(
-                                receiver_trade_logic(client, acc_id)
-                            )
-
-                            return
-            except:
-                pass
-
-            await asyncio.sleep(0.06)
-
+        # Нажимаем «Принять» прямо на пришедшем сообщении (без медленных get_chat_history)
+        if await click(client, message, "принять"):
+            print(f"✅ [Акк {acc_id}] Входящий трейд успешно принят!", flush=True)
+            await asyncio.sleep(0.2)
+            asyncio.create_task(
+                receiver_trade_logic(client, acc_id)
+            )
         return
 
+    # 3. Подтверждение со стороны твинка / основы
     if "подтвердите обмен" in text or "подтвердите" in text:
         await click(client, message, "подтвердить")
         return
@@ -405,11 +395,8 @@ async def sender_confirm_logic(client, acc_id):
                 print(f"✍️ [Акк {acc_id} - Основа] Твинк готов. Завершаю трейд...", flush=True)
 
                 await click(client, msg, "готов")
-
                 await asyncio.sleep(0.8)
-
                 await click(client, msg, "подтвердить")
-
                 break
         except:
             pass
@@ -442,7 +429,6 @@ async def handle_my_messages(client, message):
             )
         except:
             pass
-
         return
 
     if cmd in [".trade", ".t", ".т"]:
@@ -476,8 +462,10 @@ async def handle_my_messages(client, message):
 
 # --- ФОН ЗАДАЧ ---
 async def bg_tasks(client, acc_id):
+    # Плавный прогрев сессии на старте
+    await asyncio.sleep(5)
 
-    # Стартовая команда
+    # Стартовая команда активности
     try:
         await client.send_message(bot_chat, "ткарточка")
     except:
@@ -487,11 +475,7 @@ async def bg_tasks(client, acc_id):
     if acc_id in [1, 2]:
         try:
             print(f"🌙 [Акк {acc_id}] Стартовый запуск фармы в Iris Moon...", flush=True)
-
-            await client.send_message(
-                iris_bot_chat,
-                "фарма"
-            )
+            await client.send_message(iris_bot_chat, "фарма")
         except:
             pass
 
@@ -503,18 +487,12 @@ async def bg_tasks(client, acc_id):
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
-            # --- ТМАЙНИНГ ---
+            # --- ТМАЙНИНГА СБОР ---
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
                     print(f"⏰ [Акк {acc_id}] 00:10 МСК -> тмайнинг", flush=True)
-
-                    await client.send_message(
-                        bot_chat,
-                        "тмайнинг"
-                    )
-
+                    await client.send_message(bot_chat, "тмайнинг")
                     claimed_today = True
-
             else:
                 if msk_now.hour == 0 and msk_now.minute == 11:
                     claimed_today = False
@@ -524,34 +502,21 @@ async def bg_tasks(client, acc_id):
                 iris_timer += 1
 
                 if iris_timer >= 240:
-                    print(
-                        f"🌙 [Акк {acc_id}] Прошло 4 часа! Отправляю 'фарма'...",
-                        flush=True
-                    )
-
+                    print(f"🌙 [Акк {acc_id}] Прошло 4 часа! Отправляю 'фарма'...", flush=True)
                     try:
-                        await client.send_message(
-                            iris_bot_chat,
-                            "фарма"
-                        )
+                        await client.send_message(iris_bot_chat, "фарма")
                     except Exception as e:
-                        print(
-                            f"⚠️ [Акк {acc_id}] Ошибка Iris Moon: {e}",
-                            flush=True
-                        )
-
+                        print(f"⚠️ [Акк {acc_id}] Ошибка Iris Moon: {e}", flush=True)
                     iris_timer = 0
 
             # --- ПОДДЕРЖАНИЕ АКТИВНОСТИ ---
             if msk_now.minute == 0 and msk_now.hour % 2 == 0:
-                await client.send_message(
-                    bot_chat,
-                    "ткарточка"
-                )
+                await client.send_message(bot_chat, "ткарточка")
 
         except Exception as e:
             print(f"⚠️ [bg_tasks Ошибка на Акк {acc_id}]: {e}", flush=True)
 
+    # Весь цикл bg_tasks проверяет условия раз в минуту
         await asyncio.sleep(60)
 
 # --- ЗАПУСК ---
@@ -561,7 +526,6 @@ async def start_bot():
     print("🛠 Старт фермы с автофармой Iris Moon...", flush=True)
 
     for i, session in enumerate(SESSIONS):
-
         if not session or session.strip() == "":
             continue
 
@@ -585,18 +549,13 @@ async def start_bot():
             )
 
             clients.append(c)
-
             me = await c.get_me()
-
             c.me_id = me.id
 
             async for _ in c.get_dialogs(limit=5):
                 pass
 
-            print(
-                f"✅ Аккаунт {i+1} запущен: @{me.username}",
-                flush=True
-            )
+            print(f"✅ Аккаунт {i+1} запущен: @{me.username}", flush=True)
 
             is_collecting[i+1] = False
 
