@@ -121,7 +121,7 @@ async def twink_collect_logic(client, acc_id):
                     return 
 
                 if "готовность: ✅" in text or "✅" in text:
-                    print(f"✨ [Твинк {acc_id}] Готовность подтверждена ботом. Выхожу.", flush=True)
+                    print(f"✨ [Твинк {acc_id}] Готовность подтверждена ботом. Выхожу из цикла сбора.", flush=True)
                     client.collecting = False
                     return
                 
@@ -231,6 +231,19 @@ async def process_bot_logic(client, message, acc_id):
     if not message.text: return
     text = message.text.lower()
 
+    # --- ОБЩАЯ ДЛЯ ВСЕХ КНОПКА ПОДТВЕРДИТЬ (ОБМЕН ЗАВЕРШАЕТ ТОТ, КТО ПЕРВЫЙ УВИДЕЛ) ---
+    if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
+        print(f"🔗 [Аккаунт {acc_id}] Вижу финальную кнопку! Нажимаю 'Подтвердить обмен'!", flush=True)
+        await click(client, message, "trade_confirm")
+        await click(client, message, "подтвердить")
+        return
+
+    if "подтвердите обмен" in text or "подтвердите" in text:
+        if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
+            await click(client, message, "trade_confirm")
+            await click(client, message, "подтвердить")
+            return
+
     # --- ЛОГИКА ДЛЯ ТВИНКОВ (АКК 1, 3, 4, 5) ---
     if acc_id != 2:
         if "предложение обмена" in text or "пришло предложение" in text:
@@ -250,35 +263,37 @@ async def process_bot_logic(client, message, acc_id):
             client.collecting = False
         return
 
-    # --- УСИЛЕННАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2 STRICT) ---
+    # --- УСИЛЕННАЯ И КОРРЕКТНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
     if acc_id == 2:
-        # 1. Принимаем входящий трейд
+        # Принимаем входящий трейд
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
                 print(f"✅ [ОСНОВА - Акк 2] Приняла трейд. Ожидаю твинка...", flush=True)
             return
 
-        # 2. Прожимаем «Готов» на основе
-        # Реагируем, если в тексте обмена появилась любая галочка готовности (свидетельство клика твинка)
-        # ЛИБО если у твинка уже забито 10/10 предметов (значит он на финишной прямой или уже нажал)
+        # Нажимаем «Готов» на основе
         if "✅" in text or "10/10" in text:
-            if has_button(message, "готов"):
-                print(f"⚡ [ОСНОВА - Акк 2] Обнаружена готовность партнера. Нажимаю 'Готов' на основе!", flush=True)
-                await click(client, message, "готов")
+            # Страховка: если основа застряла в подменю, выходим из него на главный экран трейда
+            back_button_found = False
+            for row in message.reply_markup.inline_keyboard if message.reply_markup else []:
+                for btn in row:
+                    if "вернуться назад" in btn.text.lower() or "назад" in btn.text.lower():
+                        print(f"⚖️ [ОСНОВА - Акк 2] Твинк уже готов, а основа в подменю. Выхожу назад...", flush=True)
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=1)
+                        back_button_found = True
+                        break
+                if back_button_found: break
+
+            if back_button_found:
+                await asyncio.sleep(0.4)
                 return
 
-        # 3. Финальное подтверждение сделки кнопками "Подтвердить"
-        if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
-            print(f"🔗 [ОСНОВА - Акк 2] Прожимаю финальное 'Подтвердить' для завершения обмена!", flush=True)
-            await click(client, message, "trade_confirm")
-            await click(client, message, "подтвердить")
-            return
-
-        if "подтвердите обмен" in text or "подтвердите" in text:
-            if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
-                await click(client, message, "trade_confirm")
-                await click(client, message, "подтвердить")
+            # Если мы на главном экране трейда — прожимаем Готов
+            if has_button(message, "готов"):
+                print(f"⚡ [ОСНОВА - Акк 2] Партнер готов! Прожимаю 'Готов' на основе!", flush=True)
+                await click(client, message, "готов")
+                return
 
 # --- ХЕНДЛЕР ТЕКСТОВЫХ КОМАНД ---
 async def handle_my_messages(client, message):
@@ -350,7 +365,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Логика основы (Аккаунт 2) переведена в агрессивный режим.", flush=True)
+    print("🛠 Запуск фермы. Логика финального подтверждения синхронизирована.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -393,7 +408,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт обновлен! Теперь основа нажмет 'Готов' без осечек.", flush=True)
+    print("🚀 Всё настроено! Проверяй полный цикл обмена.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
