@@ -81,7 +81,6 @@ def has_button(message, keyword: str) -> bool:
 
 # --- СКОРОСТНОЙ ДВИЖОК ДЛЯ СБОРА ТЕЛЕФОНОВ ---
 async def execute_menu_step(client, acc_id, step_name, keywords, pick_best, last_fp):
-    # Уменьшили паузу между шагами до минимума
     await asyncio.sleep(0.05)
 
     forbidden = [
@@ -223,16 +222,14 @@ async def process_bot_logic(client, message, acc_id):
             asyncio.create_task(receiver_trade_logic(client, acc_id))
         return
 
-    # 3. МГНОВЕННОЕ ПРОЖАТИЕ ГОТОВ / ПОДТВЕРДИТЬ (Без задержек в цикле!)
+    # 3. МГНОВЕННОЕ ПРОЖАТИЕ ГОТОВ / ПОДТВЕРДИТЬ
     if "отдает вам:" in text or "занято слотов:" in text:
-        # Если основа готова, а твинк еще не нажал Готов
         if "✅" in text and (has_button(message, "готов") or has_button(message, "trade_ready")):
             print(f"✍️ [Акк {acc_id}] Твинк увидел готовность. Кликаю 'Готов'!", flush=True)
             await click(client, message, "trade_ready")
             await click(client, message, "готов")
             return
 
-        # Если доступна кнопка финального подтверждения — бьем по ней моментально
         if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
             print(f"🔗 [Акк {acc_id}] Кликаю 'Подтвердить'!", flush=True)
             await click(client, message, "trade_confirm")
@@ -244,31 +241,13 @@ async def process_bot_logic(client, message, acc_id):
             await click(client, message, "trade_confirm")
             await click(client, message, "подтвердить")
 
-# --- ХЕНДЛЕРЫ НА ПРЯМЫЕ ОБНОВЛЕНИЯ ОТ ТЕЛЕГРАМА (ЗАМЕНА ПУЛИНГУ) ---
-# Теперь скрипт не спамит запросами истории, а ждет сигнал от самого TG
-async def setup_speed_handlers(client, acc_id):
-    @client.on_message(filters.chat(bot_chat))
-    async def on_new_msg(c, m):
-        current_bot_msg[acc_id] = m
-        await process_bot_logic(c, m, acc_id)
-
-    @client.on_edited_message(filters.chat(bot_chat))
-    async def on_edited_msg(c, m):
-        current_bot_msg[acc_id] = m
-        await process_bot_logic(c, m, acc_id)
-
-# --- ОСТАЛЬНАЯ ЛОГИКА ---
-async def handle_my_messages(client, message):
+# --- ОБРАБОТКА ТВОИХ КОМАНД (.t / .ping) ---
+async def process_my_commands(client, message, acc_id):
     if not message.text: return
-    my_id = getattr(client, "me_id", 0)
-    if not message.from_user or message.from_user.id != my_id: return
-
+    
     parts = message.text.split()
     if not parts: return
     cmd = parts[0].lower().strip()
-
-    try: acc_id = clients.index(client) + 1
-    except: acc_id = 1
 
     if cmd == ".ping":
         try: await message.edit("🚀 Юзербот активен!")
@@ -277,11 +256,13 @@ async def handle_my_messages(client, message):
 
     if cmd in [".trade", ".t", ".т"]:
         target = None
-        if len(parts) == 2 and parts[1] in ACC_MACROS: target = ACC_MACROS[parts[1]]
+        if len(parts) == 2 and parts[1] in ACC_MACROS: 
+            target = ACC_MACROS[parts[1]]
         elif message.reply_to_message and message.reply_to_message.from_user:
             user = message.reply_to_message.from_user
             target = user.username or str(user.id)
-        elif len(parts) >= 2: target = parts[1].replace("@", "").strip()
+        elif len(parts) >= 2: 
+            target = parts[1].replace("@", "").strip()
 
         if not target: return
         try: await message.delete()
@@ -290,6 +271,26 @@ async def handle_my_messages(client, message):
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
 
+# --- НАСТРОЙКА ХЕНДЛЕРОВ СКОРОСТИ И КОМАНД ---
+async def setup_speed_handlers(client, acc_id):
+    # Хендлер на новые сообщения от игрового бота
+    @client.on_message(filters.chat(bot_chat))
+    async def on_new_msg(c, m):
+        current_bot_msg[acc_id] = m
+        await process_bot_logic(c, m, acc_id)
+
+    # Хендлер на изменение сообщений игровым ботом (кнопки/текст)
+    @client.on_edited_message(filters.chat(bot_chat))
+    async def on_edited_msg(c, m):
+        current_bot_msg[acc_id] = m
+        await process_bot_logic(c, m, acc_id)
+
+    # Хендлер на ТВОИ СОБСТВЕННЫЕ сообщения (команды .t и .ping)
+    @client.on_message(filters.me)
+    async def on_my_msg(c, m):
+        await process_my_commands(c, m, acc_id)
+
+# --- ФОН ЗАДАЧИ (БЕЗ ИЗМЕНЕНИЙ) ---
 async def bg_tasks(client, acc_id):
     await asyncio.sleep(5)
     try: await client.send_message(bot_chat, "ткарточка")
@@ -326,9 +327,10 @@ async def bg_tasks(client, acc_id):
         except: pass
         await asyncio.sleep(60)
 
+# --- ЗАПУСК ---
 async def start_bot():
     global clients
-    print("🛠 Старт фермы на максимальной скорости...", flush=True)
+    print("🛠 Старт фермы на максимальной скорости с фиксом команд...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -339,7 +341,6 @@ async def start_bot():
             session_string=session.strip(),
             in_memory=True,
         )
-        c.add_handler(handlers.MessageHandler(handle_my_messages))
 
         try:
             await c.start()
@@ -353,14 +354,14 @@ async def start_bot():
 
             is_collecting[i+1] = False
             
-            # Включаем моментальный перехват сообщений
+            # Регистрируем все скоростные хендлеры и команды в одном месте
             await setup_speed_handlers(c, i+1)
             
             asyncio.create_task(bg_tasks(c, i+1))
         except Exception as e:
             print(f"⚠️ Ошибка аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скоростные модули успешно запущены!", flush=True)
+    print("🚀 Все модули и команды .т успешно работают!", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
