@@ -127,10 +127,11 @@ async def twink_collect_logic(client, acc_id):
                 c_data = btn.callback_data.lower()
                 b_text = btn.text.lower()
 
-                # ИГНОРИРУЕМ кнопки отмены, обновления и готовности, но НЕ трогаем "назад" (она нужна для выхода при 10/10)
-                if any(x in c_data or x in b_text for x in ["cancel", "отмена", "главное", "меню"]): continue
-                if any(x in c_data for x in ["trade_confirm", "trade_ready", "trade_change", "trade_refresh"]): continue
-                if "вернуться назад" in b_text: continue # Не трогаем системный выход
+                # ЖЕСТКИЙ ФИЛЬТР: Кнопка "назад" НЕ должна попадать в обычный выбор предметов!
+                if any(x in c_data or x in b_text for x in ["назад", "back", "cancel", "отмена", "главное", "меню", "⬅️", "🔙"]): 
+                    continue
+                if any(x in c_data for x in ["trade_confirm", "trade_ready", "trade_change", "trade_refresh"]): 
+                    continue
 
                 if "add_phone" in c_data or "добавить телефон" in b_text:
                     add_buttons.append(btn)
@@ -178,7 +179,7 @@ async def twink_collect_logic(client, acc_id):
                     await asyncio.sleep(0.4) 
                 continue
 
-            # Шаг Г: Список редкостей и моделей телефонов
+            # Шаг Г: Список редкостей и моделей телефонов (Теперь кнопка "Назад" сюда не попадет!)
             if item_buttons:
                 target = item_buttons[0]
                 
@@ -371,7 +372,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт запущен! Навигация и кнопка Готов полностью исправлены.", flush=True)
+    print("🚀 Скрипт запущен! Петля навигации полностью устранена.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
