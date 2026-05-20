@@ -231,9 +231,9 @@ async def process_bot_logic(client, message, acc_id):
     if not message.text: return
     text = message.text.lower()
 
-    # --- ОБЩАЯ ДЛЯ ВСЕХ КНОПКА ПОДТВЕРДИТЬ (ОБМЕН ЗАВЕРШАЕТ ТОТ, КТО ПЕРВЫЙ УВИДЕЛ) ---
+    # --- ОБЩАЯ ДЛЯ ВСЕХ КНОПКА ПОДТВЕРДИТЬ ---
     if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
-        print(f"🔗 [Аккаунт {acc_id}] Вижу финальную кнопку! Нажимаю 'Подтвердить обмен'!", flush=True)
+        print(f"🔗 [Аккаунт {acc_id}] Нажимаю 'Подтвердить обмен'!", flush=True)
         await click(client, message, "trade_confirm")
         await click(client, message, "подтвердить")
         return
@@ -263,37 +263,42 @@ async def process_bot_logic(client, message, acc_id):
             client.collecting = False
         return
 
-    # --- УСИЛЕННАЯ И КОРРЕКТНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
+    # --- УМНАЯ И БЕЗОПАСНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
     if acc_id == 2:
         # Принимаем входящий трейд
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                print(f"✅ [ОСНОВА - Акк 2] Приняла трейд. Ожидаю твинка...", flush=True)
+                print(f"✅ [ОСНОВА - Акк 2] Приняла трейд. Ожидаю готовности твинка...", flush=True)
             return
 
-        # Нажимаем «Готов» на основе
-        if "✅" in text or "10/10" in text:
-            # Страховка: если основа застряла в подменю, выходим из него на главный экран трейда
-            back_button_found = False
-            for row in message.reply_markup.inline_keyboard if message.reply_markup else []:
-                for btn in row:
-                    if "вернуться назад" in btn.text.lower() or "назад" in btn.text.lower():
-                        print(f"⚖️ [ОСНОВА - Акк 2] Твинк уже готов, а основа в подменю. Выхожу назад...", flush=True)
-                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=1)
-                        back_button_found = True
-                        break
-                if back_button_found: break
+        # Проверяем, готов ли твинк, сканируя строки сообщения на наличие его юзернейма и галочки ✅
+        twink_is_ready = False
+        for line in text.split("\n"):
+            # Проверяем строки на наличие юзернеймов твинка (из ACC_MACROS, кроме основы №2)
+            for k, username in ACC_MACROS.items():
+                if k == "2": continue # Пропускаем основу
+                if username.lower() in line and "✅" in line:
+                    twink_is_ready = True
+                    break
+            if twink_is_ready: break
 
-            if back_button_found:
-                await asyncio.sleep(0.4)
-                return
-
-            # Если мы на главном экране трейда — прожимаем Готов
-            if has_button(message, "готов"):
-                print(f"⚡ [ОСНОВА - Акк 2] Партнер готов! Прожимаю 'Готов' на основе!", flush=True)
+        # Нажимаем «Готов» на основе ТОЛЬКО если твинк уже точно нажал Готов (появилась галочка ✅ на его строке)
+        if twink_is_ready and has_button(message, "готов"):
+            # Защита от подменю (на случай, если основа куда-то зашла)
+            is_deep_sub_menu = has_button(message, "1 шт") or has_button(message, "рабоч") or has_button(message, "сломан")
+            
+            if not is_deep_sub_menu:
+                print(f"⚡ [ОСНОВА - Акк 2] Твинк подтвердил готовность (✅). Прожимаю 'Готов' на основе!", flush=True)
                 await click(client, message, "готов")
                 return
+            else:
+                for row in message.reply_markup.inline_keyboard if message.reply_markup else []:
+                    for btn in row:
+                        if "вернуться назад" in btn.text.lower() or "назад" in btn.text.lower():
+                            print(f"⚖️ [ОСНОВА - Акк 2] Выхожу из подменю, чтобы нажать 'Готов'...", flush=True)
+                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=1)
+                            break
 
 # --- ХЕНДЛЕР ТЕКСТОВЫХ КОМАНД ---
 async def handle_my_messages(client, message):
@@ -325,7 +330,7 @@ async def handle_my_messages(client, message):
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
 
-# --- ФОН ЗАДАЧИ ---
+# --- ФОН ЗАДАЧ И ТАЙМЕРЫ ---
 async def bg_tasks(client, acc_id):
     await asyncio.sleep(5)
     try: await client.send_message(bot_chat, "ткарточка")
@@ -365,7 +370,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Логика финального подтверждения синхронизирована.", flush=True)
+    print("🛠 Запуск фермы. Включен строгий трекинг ✅ твинков для основы.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -408,7 +413,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Всё настроено! Проверяй полный цикл обмена.", flush=True)
+    print("🚀 Безопасный скрипт запущен! Преждевременное нажатие основы исключено.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
