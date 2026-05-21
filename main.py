@@ -60,10 +60,10 @@ async def click(client, message, keyword: str, acc_id="Твинк") -> bool:
                                 timeout=2
                             )
                             if res and hasattr(res, "message") and "нет доступных" in res.message.lower():
-                                print(f"⚠️ [{acc_id}] Алерт: '{res.message}'. Вынужденно перехожу на СЛОМАННЫЕ!", flush=True)
+                                print(f"⚠️ [{acc_id}] Алерт бота: '{res.message}'. Переключаюсь на СЛОМАННЫЕ телефоны (Лимит 5).", flush=True)
                                 if "рабоч" in t_low:
                                     client.working_phones_empty = True
-                                    client.max_trade_limit = 5  # Динамически снижаем лимит до 5
+                                    client.max_trade_limit = 5
                                     client.current_step = "MAIN"
                             return True
                         except Exception as e:
@@ -85,15 +85,9 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- ТЕХНИЧЕСКИЙ АВТОСБОР ТВИНКА С УМНЫМ ЛИМИТОМ ---
+# --- ТЕХНИЧЕСКИЙ АВТОСБОР ТВИНКА С АДАПТИВНЫМ ВЫБОРОМ ---
 async def twink_collect_logic(client, acc_id):
-    # По умолчанию целимся на 10 рабочих телефонов
-    client.max_trade_limit = 10
-    
-    if hasattr(client, "working_phones_empty") and client.working_phones_empty:
-        client.max_trade_limit = 5
-        
-    print(f"⚡ [Твинк {acc_id}] Пошаговый автосбор запущен. Текущий целевой лимит: {client.max_trade_limit} шт.", flush=True)
+    print(f"⚡ [Твинк {acc_id}] Пошаговый сборщик запущен. Базовый лимит: {client.max_trade_limit} шт.", flush=True)
     
     client.current_step = "MAIN" 
     last_msg_id = 0
@@ -113,22 +107,23 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(0.2)
                 continue
 
+            # Защита от зависания в одном и том же окне бота
             if msg.id != last_msg_id:
                 stuck_ticks = 0
                 last_msg_id = msg.id
             else:
                 stuck_ticks += 1
                 if stuck_ticks > 12:
-                    print(f"🔄 [Твинк {acc_id}] Задержка ответа бота. Сброс шага в MAIN.", flush=True)
+                    print(f"🔄 [Твинк {acc_id}] Долгий ступор в меню. Сбрасываю шаг в MAIN для перезахода.", flush=True)
                     client.current_step = "MAIN"
                     stuck_ticks = 0
 
             text = msg.text.lower() if msg.text else ""
 
-            # ДИНАМИЧЕСКИЙ СТОП ПО ЛИМИТУ (5 для сломанных / 10 для рабочих)
+            # ПРОВЕРКА ЛИМИТОВ ТРЕЙДА
             if client.trade_counter >= client.max_trade_limit or "5/10" in text and client.max_trade_limit == 5 or "10/10" in text:
                 if has_button(msg, "готов"):
-                    print(f"🏁 [Твинк {acc_id}] Лимит ({client.trade_counter}/{client.max_trade_limit}) достигнут. Нажимаю 'Готов'!", flush=True)
+                    print(f"🏁 [Твинк {acc_id}] Лимит достигнут ({client.trade_counter}/{client.max_trade_limit}). Нажимаю 'Готов'!", flush=True)
                     await click(client, msg, "готов", acc_id)
                     return
                 
@@ -140,7 +135,7 @@ async def twink_collect_logic(client, acc_id):
                             break
                 continue
 
-            # Сортировка инлайн-кнопок
+            # Сортировка кнопок на экране
             add_phone_btn = None
             ready_broken_btns = []
             one_pcs_btn = None
@@ -165,23 +160,31 @@ async def twink_collect_logic(client, acc_id):
                     else:
                         model_btns.append(btn)
 
-            # Шаг 1: Главное меню трейда
+            # Шаг 1: Находимся в главном меню трейда
             if client.current_step == "MAIN" and add_phone_btn:
                 client.current_step = "WAIT_CATEGORY"
                 await client.request_callback_answer(msg.chat.id, msg.id, add_phone_btn.callback_data, timeout=1)
                 await asyncio.sleep(0.4)
                 continue
 
-            # Шаг 2: Категория (Рабочий / Сломанный)
+            # Шаг 2: Меню выбора категорий (Рабочий / Сломанный)
             if client.current_step == "WAIT_CATEGORY" and ready_broken_btns:
                 target = None
-                if getattr(client, "working_phones_empty", False):
-                    client.max_trade_limit = 5  # Перестраховка: если ушли в сломанные, лимит строго 5
+                
+                # Ищем кнопку в зависимости от статуса инвентаря
+                if client.working_phones_empty:
+                    # Если рабочие кончились, ищем строго сломанный
                     for btn in ready_broken_btns:
-                        if "сломан" in btn.text.lower(): target = btn; break
+                        if "сломан" in btn.text.lower(): 
+                            target = btn
+                            break
                 else:
+                    # Иначе сначала пытаемся закинуть рабочие
                     for btn in ready_broken_btns:
-                        if "рабоч" in btn.text.lower(): target = btn; break
+                        if "рабоч" in btn.text.lower(): 
+                            target = btn
+                            break
+                    # Если кнопки "рабочий" на экране почему-то нет, берём сломанный
                     if not target:
                         for btn in ready_broken_btns:
                             if "сломан" in btn.text.lower(): 
@@ -191,34 +194,39 @@ async def twink_collect_logic(client, acc_id):
                                 break
 
                 if target:
+                    print(f"📂 [Твинк {acc_id}] Шаг WAIT_CATEGORY -> Выбираю: {target.text}", flush=True)
                     client.current_step = "WAIT_MODEL"
                     await click(client, msg, target.text, f"Твинк {acc_id}")
                     await asyncio.sleep(0.4)
                 continue
 
-            # Шаг 3: Модель
+            # Шаг 3: Меню выбора модели телефона
             if client.current_step == "WAIT_MODEL" and model_btns:
                 target = model_btns[0]
                 for btn in model_btns:
                     if any(x in btn.text.lower() for x in ["мистич", "редк", "эпич"]):
                         target = btn
                         break
+                print(f"📱 [Твинк {acc_id}] Шаг WAIT_MODEL -> Модель: {target.text}", flush=True)
                 client.current_step = "WAIT_1_SHT"
                 await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                 await asyncio.sleep(0.4)
                 continue
 
-            # Шаг 4: Подтверждение (1 шт)
+            # Шаг 4: Подтверждение количества (1 шт)
             if client.current_step == "WAIT_1_SHT" and one_pcs_btn:
                 client.trade_counter += 1
-                print(f"📦 [Твинк {acc_id}] Добавил телефон ({client.trade_counter}/{client.max_trade_limit})", flush=True)
+                print(f"📦 [Твинк {acc_id}] Телефон добавлен ({client.trade_counter}/{client.max_trade_limit})", flush=True)
                 client.current_step = "MAIN"
                 await client.request_callback_answer(msg.chat.id, msg.id, one_pcs_btn.callback_data, timeout=1)
                 await asyncio.sleep(0.4)
                 continue
 
+            # Корректировка шагов на случай непредвиденного обновления интерфейса ботом
             if add_phone_btn and client.current_step != "MAIN":
                 client.current_step = "MAIN"
+            elif ready_broken_btns and client.current_step == "MAIN":
+                client.current_step = "WAIT_CATEGORY"
 
         except Exception as e:
             print(f"⚠️ Ошибка сборщика твинка {acc_id}: {e}", flush=True)
@@ -226,8 +234,7 @@ async def twink_collect_logic(client, acc_id):
 
 # --- УМНЫЙ АДАПТИВНЫЙ ТАЙМЕР ОЖИДАНИЯ ДЛЯ ОСНОВЫ ---
 async def smart_basis_wait_loop(client):
-    print("⏳ [ОСНОВА] Запуск мониторинга трейда. Жду готовности твинка...", flush=True)
-    
+    print("⏳ [ОСНОВА] Мониторю статус трейда...", flush=True)
     for second in range(30):
         await asyncio.sleep(1.0)
         try:
@@ -239,11 +246,9 @@ async def smart_basis_wait_loop(client):
             if not msg: continue
             text = msg.text.lower() if msg.text else ""
 
-            # Основа жмет готов, если видит 10/10 (рабочие) ИЛИ если видит 5/10 при сломанных
-            # Также триггером служит галочка готовности от самого твинка (готовность: ✅)
             if "10/10" in text or "5/10" in text or "готовность: ✅" in text:
                 if has_button(msg, "готов"):
-                    print(f"🎯 [ОСНОВА] Условия обмена выполнены. Нажимаю 'Готов'.", flush=True)
+                    print(f"🎯 [ОСНОВА] Условия выполнены. Нажимаю 'Готов'.", flush=True)
                     await click(client, msg, "готов", "Основа")
                     return
         except Exception as e:
@@ -252,7 +257,7 @@ async def smart_basis_wait_loop(client):
     try:
         async for m in client.get_chat_history(bot_chat, limit=1):
             if m and has_button(m, "готов"):
-                print("⏰ [ОСНОВА] Вышло максимальное время ожидания. Прожимаю 'Готов'.", flush=True)
+                print("⏰ [ОСНОВА] Прожим по тайм-ауту.", flush=True)
                 await click(client, m, "готов", "Основа")
     except: pass
 
@@ -277,8 +282,12 @@ async def process_bot_logic(client, message, acc_id):
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept", acc_id) or await click(client, message, "принять", acc_id):
-                print(f"✅ [Твинк {acc_id}] Трейд принят. Анализирую тип инвентаря...", flush=True)
+                # СБРОС ИНИЦИАЛИЗАЦИИ ДЛЯ НОВОГО ТРЕЙДА
                 client.trade_counter = 0
+                client.working_phones_empty = False
+                client.max_trade_limit = 10 
+                
+                print(f"✅ [Твинк {acc_id}] Трейд принят. Параметры очищены, начинаю сборку...", flush=True)
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
 
@@ -290,7 +299,7 @@ async def process_bot_logic(client, message, acc_id):
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept", "Основа") or await click(client, message, "принять", "Основа"):
-                print(f"✅ [ОСНОВА] Трейд принят. Включаю адаптивное слежение за твинком...", flush=True)
+                print(f"✅ [ОСНОВА] Трейд принят. Ожидаю твинка...", flush=True)
                 asyncio.create_task(smart_basis_wait_loop(client))
             return
 
@@ -367,7 +376,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Перезапуск фермы. Установлен раздельный лимит: Рабочие (10) / Сломанные (5).", flush=True)
+    print("🛠 Перезапуск фермы. Устранен затуп в окне выбора категорий.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -392,9 +401,9 @@ async def start_bot():
             async for _ in c.get_dialogs(limit=5): pass
 
             if acc_id == 2:
-                print(f"👑 ОСНОВА (Акк 2) готова к адаптивным трейдам.", flush=True)
+                print(f"👑 ОСНОВА (Акк 2) в сети.", flush=True)
             else:
-                print(f"✅ Твинк {acc_id} готов к адаптивным трейдам.", flush=True)
+                print(f"✅ Твинк {acc_id} в сети.", flush=True)
 
             c.add_handler(handlers.MessageHandler(
                 lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
@@ -410,7 +419,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт запущен! Теперь рабочие залетают до 10 штук, а сломанные четко тормозят на 5.", flush=True)
+    print("🚀 Ферма обновлена! Теперь застревание в меню категорий полностью исключено.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
