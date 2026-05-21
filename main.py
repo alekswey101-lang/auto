@@ -120,12 +120,12 @@ async def twink_collect_logic(client, acc_id):
                 if has_button(msg, "готов"):
                     print(f"⚡ [Твинк {acc_id}] Вышли в меню. Нажимаю 'Готов'!", flush=True)
                     await click(client, msg, "готов")
-                    client.collecting = False 
+                    client.collecting = False  # СБОР ОКОНЧЕН
                     return 
 
                 if "готовность: ✅" in text or "✅" in text:
                     print(f"✨ [Твинк {acc_id}] Готовность подтверждена ботом. Выхожу из цикла сбора.", flush=True)
-                    client.collecting = False
+                    client.collecting = False  # СБОР ОКОНЧЕН
                     return
                 
                 continue
@@ -245,6 +245,7 @@ async def twink_collect_logic(client, acc_id):
 
 # --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
 async def process_bot_logic(client, message, acc_id):
+    global clients
     if not message: return
 
     if not hasattr(client, "collecting"): client.collecting = False
@@ -289,7 +290,7 @@ async def process_bot_logic(client, message, acc_id):
                 client.trade_counter = 0
                 client.working_phones_empty = False 
                 client.failed_working_clicks = 0
-                client.collecting = True
+                client.collecting = True  # СИГНАЛ ДЛЯ ОСНОВЫ: Твинк начал сбор!
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
 
@@ -299,28 +300,30 @@ async def process_bot_logic(client, message, acc_id):
             client.collecting = False
         return
 
-    # --- ЧИСТАЯ ИСПРАВЛЕННАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
+    # --- УМНАЯ СИНХРОНИЗИРОВАННАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
     if acc_id == 2:
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                print(f"✅ [ОСНОВА] Приняла трейд. Ожидаю готовности твинка...", flush=True)
+                print(f"✅ [ОСНОВА] Приняла трейд. Ожидаю наполнения от твинка...", flush=True)
             return
 
-        # Ищем, готов ли твинк
-        twink_is_ready = False
-        for line in text.split("\n"):
-            for k, username in ACC_MACROS.items():
-                if k == "2": continue 
-                if username.lower() in line and "✅" in line:
-                    twink_is_ready = True
+        # Проверяем, собирает ли СЕЙЧАС какой-либо твинк предметы
+        any_twink_collecting = False
+        for c in clients:
+            if hasattr(c, "me_id") and c.me_id != client.me_id: # Пропускаем саму основу
+                if hasattr(c, "collecting") and c.collecting:
+                    any_twink_collecting = True
                     break
-            if twink_is_ready: break
 
-        # Если твинк прислал галочку, основа БЕЗУСЛОВНО прожимает Готов
-        if twink_is_ready and has_button(message, "готов"):
-            print(f"⚡ [ОСНОВА] Твинк готов (✅). Мгновенно прожимаю 'Готов' на основе!", flush=True)
-            await click(client, message, "готов")
+        # Если кнопка Готов есть на экране, И ни один твинк больше НЕ занят сбором (все закончили)
+        if has_button(message, "готов"):
+            if not any_twink_collecting:
+                print(f"⚡ [ОСНОВА] Все твинки завершили сбор. Нажимаю 'Готов' на основе!", flush=True)
+                await click(client, message, "готов")
+            else:
+                # Если твинк еще собирает, основа просто ждет следующего обновления меню
+                pass
             return
 
 # --- ХЕНДЛЕР ТЕКСТОВЫХ КОМАНД ---
@@ -401,8 +404,9 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Исправлен отклик Основы на кнопку 'Готов'.", flush=True)
+    print("🛠 Запуск фермы. Включена прямая синхронизация Основы и Твинков через оперативную память.", flush=True)
 
+    # Инициализируем массив клиентов заранее, чтобы основа могла видеть статусы твинков
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
         c = Client(
@@ -412,13 +416,14 @@ async def start_bot():
             session_string=session.strip(),
             in_memory=True,
         )
-
         c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
+        clients.append(c)
 
+    # Запускаем клиентов по очереди
+    for i, c in enumerate(clients):
         try:
             await c.start()
             await c.invoke(raw.functions.updates.GetState())
-            clients.append(c)
             me = await c.get_me()
             c.me_id = me.id
 
@@ -444,7 +449,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт перезапущен! Теперь основа нажимает Готов моментально.", flush=True)
+    print("🚀 Скрипт успешно запущен с беспроводной синхронизацией! Основа нажмет 'Готов' ровно тогда, когда твинк закончит закидывать вещи.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
