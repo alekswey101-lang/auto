@@ -81,6 +81,11 @@ def has_button(message, keyword: str) -> bool:
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Фоновый автосбор успешно запущен.", flush=True)
     last_clicked_callback = "" 
+    
+    # Флаг, сигнализирующий, что рабочие телефоны закончились (уведомление или затуп)
+    working_phones_depleted = False 
+    last_cond_click_time = 0
+    consecutive_cond_clicks = 0
 
     for tick in range(150):
         try:
@@ -169,28 +174,68 @@ async def twink_collect_logic(client, acc_id):
 
             if add_buttons:
                 target = add_buttons[0]
-                if target.callback_data != last_clicked_callback:
-                    last_clicked_callback = target.callback_data
-                    print(f"➕ [Твинк {acc_id}] Клик: 'Добавить телефон'", flush=True)
-                    await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
-                    await asyncio.sleep(0.3)
+                last_clicked_callback = "" # Сбрасываем кэш кликов при входе в новое меню добавления
+                print(f"➕ [Твинк {acc_id}] Клик: 'Добавить телефон'", flush=True)
+                await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
+                await asyncio.sleep(0.4)
                 continue
 
             if cond_buttons:
-                target = cond_buttons[0]
+                target = None
+                
+                # Ищем кнопки типов телефонов
+                work_btn = None
+                broken_btn = None
                 for btn in cond_buttons:
                     if "рабоч" in btn.text.lower():
-                        target = btn
-                        break
-                if target.callback_data != last_clicked_callback:
+                        work_btn = btn
+                    if "сломан" in btn.text.lower():
+                        broken_btn = btn
+
+                # Умный выбор: если рабочие не закончились — жмем рабочий. Иначе — сломанный.
+                if work_btn and not working_phones_depleted:
+                    target = work_btn
+                elif broken_btn:
+                    target = broken_btn
+                else:
+                    target = cond_buttons[0]
+
+                # Счетчик кликов подряд по одной и той же категории без изменения меню (защита от зависания)
+                if last_clicked_callback == target.callback_data:
+                    consecutive_cond_clicks += 1
+                else:
+                    consecutive_cond_clicks = 1
                     last_clicked_callback = target.callback_data
-                    print(f"📱 [Твинк {acc_id}] Клик: 'Рабочий телефон'", flush=True)
-                    await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
-                    await asyncio.sleep(0.4) 
+
+                # Если мы 3 раза подряд нажали на "Рабочий телефон", но окно не изменилось — значит они закончились!
+                if target == work_btn and consecutive_cond_clicks >= 3:
+                    print(f"⚠️ [Твинк {acc_id}] Обнаружен затуп на рабочих телефонах. Переключаюсь на СЛОМАННЫЕ!", flush=True)
+                    working_phones_depleted = True
+                    if broken_btn:
+                        target = broken_btn
+                        last_clicked_callback = target.callback_data
+                        consecutive_cond_clicks = 1
+                    else:
+                        continue
+
+                print(f"📱 [Твинк {acc_id}] Клик: '{target.text}'", flush=True)
+                await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
+                await asyncio.sleep(0.5) 
                 continue
 
             if item_buttons:
                 target = item_buttons[0]
+                
+                # Защита от затупа на окне выбора РЕДКОСТИ
+                if "редкость" in text:
+                    if target.callback_data != last_clicked_callback:
+                        last_clicked_callback = target.callback_data
+                        print(f"🔮 [Твинк {acc_id}] Клик по редкости: [{target.text}]", flush=True)
+                        await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
+                        await asyncio.sleep(0.5)
+                    continue
+                
+                # Обычный выбор модели внутри категории
                 for btn in item_buttons:
                     if "мистич" in btn.text.lower() or "редк" in btn.text.lower():
                         target = btn
@@ -261,7 +306,7 @@ async def process_bot_logic(client, message, acc_id):
             print(f"⚡ [Твинк {acc_id}] Страховка: Нажимаю 'Готов' в главном меню.", flush=True)
             await click(client, message, "готов")
             client.collecting = False
-        return
+            return
 
     # --- УМНАЯ И БЕЗОПАСНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
     if acc_id == 2:
