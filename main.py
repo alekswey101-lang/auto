@@ -77,14 +77,13 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- ТЕХНИЧЕСКИЙ АВТОСБОР ТВИНКА С УМНЫМ ОБХОДОМ СТАДНЫХ КНОПОК ---
+# --- ТЕХНИЧЕСКИЙ АВТОСБОР ТВИНКА ---
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Фоновый автосбор успешно запущен.", flush=True)
     last_clicked_callback = "" 
     
-    # Флаг, который скажет нам, что рабочие телефоны закончились (если клик не сменил меню)
-    if not hasattr(client, "working_phones_empty"):
-        client.working_phones_empty = False
+    client.working_phones_empty = False
+    client.failed_working_clicks = 0
 
     for tick in range(150):
         try:
@@ -161,6 +160,9 @@ async def twink_collect_logic(client, acc_id):
                 else:
                     item_buttons.append(btn)
 
+            if item_buttons or single_buttons:
+                client.failed_working_clicks = 0
+
             # 1. Шаг добавления количества (1 шт)
             if single_buttons:
                 target = single_buttons[0]
@@ -182,23 +184,20 @@ async def twink_collect_logic(client, acc_id):
                     await asyncio.sleep(0.3)
                 continue
 
-            # 3. УМНЫЙ ВЫБОР СОСТОЯНИЯ С ДЕТЕКТОРОМ ПУСТОГО ИНВЕНТАРЯ
+            # 3. НАДЕЖНЫЙ ВЫБОР СОСТОЯНИЯ
             if cond_buttons:
                 target = None
                 
-                # Если мы уже знаем, что рабочие кончились, сразу ищем сломанный
                 if client.working_phones_empty:
                     for btn in cond_buttons:
                         if "сломан" in btn.text.lower():
                             target = btn
                             break
                 else:
-                    # По умолчанию пытаемся жать рабочий
                     for btn in cond_buttons:
                         if "рабоч" in btn.text.lower():
                             target = btn
                             break
-                    # На случай если кнопки рабочий физически нет
                     if not target:
                         for btn in cond_buttons:
                             if "сломан" in btn.text.lower():
@@ -207,21 +206,20 @@ async def twink_collect_logic(client, acc_id):
                                 break
 
                 if target:
-                    # ПРОГРЕССИВНАЯ ПРОВЕРКА: Если мы жмем одну и ту же инлайн-кнопку категории ДВАЖДЫ подряд,
-                    # и меню при этом не сменилось на выбор моделей, значит бот выдал алерт "Нет доступных рабочих телефонов"
-                    if target.callback_data == last_clicked_callback and "рабоч" in target.text.lower():
-                        print(f"⚠️ [Твинк {acc_id}] Обнаружен алерт бота! Рабочие телефоны кончились. Переключаюсь на СЛОМАННЫЕ.", flush=True)
-                        client.working_phones_empty = True
-                        # Находим кнопку сломанного на этом же тике, чтобы не терять время
-                        for btn in cond_buttons:
-                            if "сломан" in btn.text.lower():
-                                target = btn
-                                break
+                    if "рабоч" in target.text.lower():
+                        client.failed_working_clicks += 1
+                        if client.failed_working_clicks >= 3:
+                            print(f"🪛 [Твинк {acc_id}] Рабочие пустые. Переключаюсь на СЛОМАННЫЕ!", flush=True)
+                            client.working_phones_empty = True
+                            for btn in cond_buttons:
+                                if "сломан" in btn.text.lower():
+                                    target = btn
+                                    break
 
                     last_clicked_callback = target.callback_data
                     print(f"📱 [Твинк {acc_id}] Клик состояние: [{target.text}]", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
-                    await asyncio.sleep(0.5) # Чуть увеличим задержку для обработки ботом алертов
+                    await asyncio.sleep(0.5)
                 continue
 
             # 4. Шаг выбора модели телефона
@@ -289,7 +287,8 @@ async def process_bot_logic(client, message, acc_id):
                     return
                 print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск сборщика...", flush=True)
                 client.trade_counter = 0
-                client.working_phones_empty = False # СБРАСЫВАЕМ флаг пустых телефонов для нового трейда!
+                client.working_phones_empty = False 
+                client.failed_working_clicks = 0
                 client.collecting = True
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
@@ -300,14 +299,15 @@ async def process_bot_logic(client, message, acc_id):
             client.collecting = False
         return
 
-    # --- УМНАЯ И БЕЗОПАСНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
+    # --- ЧИСТАЯ ИСПРАВЛЕННАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
     if acc_id == 2:
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                print(f"✅ [ОСНОВА - Акк 2] Приняла трейд. Ожидаю готовности твинка...", flush=True)
+                print(f"✅ [ОСНОВА] Приняла трейд. Ожидаю готовности твинка...", flush=True)
             return
 
+        # Ищем, готов ли твинк
         twink_is_ready = False
         for line in text.split("\n"):
             for k, username in ACC_MACROS.items():
@@ -317,20 +317,11 @@ async def process_bot_logic(client, message, acc_id):
                     break
             if twink_is_ready: break
 
+        # Если твинк прислал галочку, основа БЕЗУСЛОВНО прожимает Готов
         if twink_is_ready and has_button(message, "готов"):
-            is_deep_sub_menu = has_button(message, "1 шт") or has_button(message, "рабоч") or has_button(message, "сломан")
-            
-            if not is_deep_sub_menu:
-                print(f"⚡ [ОСНОВА - Акк 2] Твинк подтвердил готовность (✅). Прожимаю 'Готов' на основе!", flush=True)
-                await click(client, message, "готов")
-                return
-            else:
-                for row in message.reply_markup.inline_keyboard if message.reply_markup else []:
-                    for btn in row:
-                        if "вернуться назад" in btn.text.lower() or "назад" in btn.text.lower():
-                            print(f"⚖️ [ОСНОВА - Акк 2] Выхожу из подменю, чтобы нажать 'Готов'...", flush=True)
-                            await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=1)
-                            break
+            print(f"⚡ [ОСНОВА] Твинк готов (✅). Мгновенно прожимаю 'Готов' на основе!", flush=True)
+            await click(client, message, "готов")
+            return
 
 # --- ХЕНДЛЕР ТЕКСТОВЫХ КОМАНД ---
 async def handle_my_messages(client, message):
@@ -410,7 +401,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Добавлен интеллектуальный детектор всплывающих алертов бота.", flush=True)
+    print("🛠 Запуск фермы. Исправлен отклик Основы на кнопку 'Готов'.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -453,7 +444,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт полностью исправлен и запущен! Теперь пустой инвентарь не помеха.", flush=True)
+    print("🚀 Скрипт перезапущен! Теперь основа нажимает Готов моментально.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
