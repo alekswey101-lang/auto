@@ -82,10 +82,12 @@ async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Фоновый автосбор успешно запущен.", flush=True)
     last_clicked_callback = "" 
     
-    # Флаг, сигнализирующий, что рабочие телефоны закончились (уведомление или затуп)
     working_phones_depleted = False 
-    last_cond_click_time = 0
     consecutive_cond_clicks = 0
+
+    # По умолчанию ставим базовый лимит 10, но он изменится на 5, если кликнем на сломанные
+    if not hasattr(client, "dynamic_limit"):
+        client.dynamic_limit = 10 
 
     for tick in range(150):
         try:
@@ -103,13 +105,13 @@ async def twink_collect_logic(client, acc_id):
 
             text = msg.text.lower() if msg.text else ""
 
-            # ЕСЛИ ЛИМИТ ДОСТИГНУТ (10/10)
-            if client.trade_counter >= 10 or "занято слотов: 10/10" in text:
+            # ПРОВЕРКА ДИНАМИЧЕСКОГО ЛИМИТА (10 для рабочих / 5 для сломанных)
+            if client.trade_counter >= client.dynamic_limit or f"занято слотов: {client.dynamic_limit}/{client.dynamic_limit}" in text or "занято слотов: 10/10" in text:
                 back_button_found = False
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         if "вернуться назад" in btn.text.lower() or "назад" in btn.text.lower():
-                            print(f"⚖️ [Твинк {acc_id}] Лимит 10/10! Жму 'Вернуться назад' для выхода в меню...", flush=True)
+                            print(f"⚖️ [Твинк {acc_id}] Лимит {client.dynamic_limit} достигнут! Выхожу в меню...", flush=True)
                             await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
                             back_button_found = True
                             break
@@ -120,13 +122,13 @@ async def twink_collect_logic(client, acc_id):
                     continue
 
                 if has_button(msg, "готов"):
-                    print(f"⚡ [Твинк {acc_id}] Вышли в меню. Нажимаю 'Готов'!", flush=True)
+                    print(f"⚡ [Твинк {acc_id}] Вышли в меню. Нажимаю 'Готов'! (Собрано: {client.trade_counter})", flush=True)
                     await click(client, msg, "готов")
                     client.collecting = False 
                     return 
 
                 if "готовность: ✅" in text or "✅" in text:
-                    print(f"✨ [Твинк {acc_id}] Готовность подтверждена ботом. Выхожу из цикла сбора.", flush=True)
+                    print(f"✨ [Твинк {acc_id}] Готовность подтверждена. Выхожу.", flush=True)
                     client.collecting = False
                     return
                 
@@ -167,14 +169,14 @@ async def twink_collect_logic(client, acc_id):
                 if target.callback_data != last_clicked_callback:
                     last_clicked_callback = target.callback_data
                     client.trade_counter += 1
-                    print(f"📦 [Твинк {acc_id}] Клик: 'Добавить 1 шт.' (Загружено: {client.trade_counter}/10)", flush=True)
+                    print(f"📦 [Твинк {acc_id}] Клик: 'Добавить 1 шт.' (Загружено: {client.trade_counter}/{client.dynamic_limit})", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                     await asyncio.sleep(0.5) 
                 continue
 
             if add_buttons:
                 target = add_buttons[0]
-                last_clicked_callback = "" # Сбрасываем кэш кликов при входе в новое меню добавления
+                last_clicked_callback = "" 
                 print(f"➕ [Твинк {acc_id}] Клик: 'Добавить телефон'", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                 await asyncio.sleep(0.4)
@@ -182,17 +184,15 @@ async def twink_collect_logic(client, acc_id):
 
             if cond_buttons:
                 target = None
-                
-                # Ищем кнопки типов телефонов
                 work_btn = None
                 broken_btn = None
+                
                 for btn in cond_buttons:
                     if "рабоч" in btn.text.lower():
                         work_btn = btn
                     if "сломан" in btn.text.lower():
                         broken_btn = btn
 
-                # Умный выбор: если рабочие не закончились — жмем рабочий. Иначе — сломанный.
                 if work_btn and not working_phones_depleted:
                     target = work_btn
                 elif broken_btn:
@@ -200,16 +200,14 @@ async def twink_collect_logic(client, acc_id):
                 else:
                     target = cond_buttons[0]
 
-                # Счетчик кликов подряд по одной и той же категории без изменения меню (защита от зависания)
                 if last_clicked_callback == target.callback_data:
                     consecutive_cond_clicks += 1
                 else:
                     consecutive_cond_clicks = 1
                     last_clicked_callback = target.callback_data
 
-                # Если мы 3 раза подряд нажали на "Рабочий телефон", но окно не изменилось — значит они закончились!
                 if target == work_btn and consecutive_cond_clicks >= 3:
-                    print(f"⚠️ [Твинк {acc_id}] Обнаружен затуп на рабочих телефонах. Переключаюсь на СЛОМАННЫЕ!", flush=True)
+                    print(f"⚠️ [Твинк {acc_id}] Рабочие телефоны кончились. Переключаюсь на СЛОМАННЫЕ (Лимит изменен на 5)!", flush=True)
                     working_phones_depleted = True
                     if broken_btn:
                         target = broken_btn
@@ -218,7 +216,14 @@ async def twink_collect_logic(client, acc_id):
                     else:
                         continue
 
-                print(f"📱 [Твинк {acc_id}] Клик: '{target.text}'", flush=True)
+                # ДИНАМИЧЕСКАЯ УСТАНОВКА ЛИМИТА В ЗАВИСИМОСТИ ОТ КАТЕГОРИИ
+                if target == work_btn:
+                    client.dynamic_limit = 10
+                    print(f"📱 [Твинк {acc_id}] Выбрана категория РАБОЧИЕ. Целевой лимит: 10 штук.", flush=True)
+                elif target == broken_btn:
+                    client.dynamic_limit = 5
+                    print(f"🛠 [Твинк {acc_id}] Выбрана категория СЛОМАННЫЕ. Целевой лимит: 5 штук.", flush=True)
+
                 await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                 await asyncio.sleep(0.5) 
                 continue
@@ -226,7 +231,6 @@ async def twink_collect_logic(client, acc_id):
             if item_buttons:
                 target = item_buttons[0]
                 
-                # Защита от затупа на окне выбора РЕДКОСТИ
                 if "редкость" in text:
                     if target.callback_data != last_clicked_callback:
                         last_clicked_callback = target.callback_data
@@ -235,7 +239,6 @@ async def twink_collect_logic(client, acc_id):
                         await asyncio.sleep(0.5)
                     continue
                 
-                # Обычный выбор модели внутри категории
                 for btn in item_buttons:
                     if "мистич" in btn.text.lower() or "редк" in btn.text.lower():
                         target = btn
@@ -298,6 +301,7 @@ async def process_bot_logic(client, message, acc_id):
                     return
                 print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск сборщика...", flush=True)
                 client.trade_counter = 0
+                client.dynamic_limit = 10 # Сброс лимита на дефолт при старте нового трейда
                 client.collecting = True
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
@@ -310,27 +314,22 @@ async def process_bot_logic(client, message, acc_id):
 
     # --- УМНАЯ И БЕЗОПАСНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
     if acc_id == 2:
-        # Принимаем входящий трейд
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
                 print(f"✅ [ОСНОВА - Акк 2] Приняла трейд. Ожидаю готовности твинка...", flush=True)
             return
 
-        # Проверяем, готов ли твинк, сканируя строки сообщения на наличие его юзернейма и галочки ✅
         twink_is_ready = False
         for line in text.split("\n"):
-            # Проверяем строки на наличие юзернеймов твинка (из ACC_MACROS, кроме основы №2)
             for k, username in ACC_MACROS.items():
-                if k == "2": continue # Пропускаем основу
+                if k == "2": continue 
                 if username.lower() in line and "✅" in line:
                     twink_is_ready = True
                     break
             if twink_is_ready: break
 
-        # Нажимаем «Готов» на основе ТОЛЬКО если твинк уже точно нажал Готов (появилась галочка ✅ на его строке)
         if twink_is_ready and has_button(message, "готов"):
-            # Защита от подменю (на случай, если основа куда-то зашла)
             is_deep_sub_menu = has_button(message, "1 шт") or has_button(message, "рабоч") or has_button(message, "сломан")
             
             if not is_deep_sub_menu:
