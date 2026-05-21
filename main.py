@@ -40,6 +40,8 @@ ACC_MACROS = {
     "5": "ivannomor"
 }
 
+account_names = {}
+
 # --- НАДЕЖНЫЙ КЛИКЕР ---
 async def click(client, message, keyword: str) -> bool:
     try:
@@ -90,9 +92,10 @@ async def twink_collect_logic(client, acc_id):
             if not hasattr(client, "trade_counter"):
                 client.trade_counter = 0
 
+            # Твинки тоже принудительно обновляют сообщение, чтобы не собирать "вслепую"
             msg = None
             async for m in client.get_chat_history(bot_chat, limit=1):
-                msg = m
+                msg = await client.get_messages(bot_chat, m.id)
                 break
 
             if not msg or not msg.reply_markup:
@@ -107,7 +110,7 @@ async def twink_collect_logic(client, acc_id):
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         if "вернуться назад" in btn.text.lower() or "назад" in btn.text.lower():
-                            print(f"⚖️ [Твинк {acc_id}] Лимит 10/10! Жму 'Вернуться назад' для выхода в меню...", flush=True)
+                            print(f"⚖️ [Твинк {acc_id}] Лимит 10/10! Жму 'Вернуться назад'...", flush=True)
                             await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
                             back_button_found = True
                             break
@@ -118,14 +121,11 @@ async def twink_collect_logic(client, acc_id):
                     continue
 
                 if has_button(msg, "готов"):
-                    print(f"⚡ [Твинк {acc_id}] Вышли в меню. Нажимаю 'Готов'!", flush=True)
+                    print(f"⚡ [Твинк {acc_id}] Нажимаю 'Готов'!", flush=True)
                     await click(client, msg, "готов")
-                    client.collecting = False  
                     return 
 
                 if "готовность: ✅" in text or "✅" in text:
-                    print(f"✨ [Твинк {acc_id}] Готовность подтверждена ботом. Выхожу из цикла сбора.", flush=True)
-                    client.collecting = False  
                     return
                 
                 continue
@@ -163,66 +163,53 @@ async def twink_collect_logic(client, acc_id):
             if item_buttons or single_buttons:
                 client.failed_working_clicks = 0
 
-            # 1. Шаг добавления количества (1 шт)
+            # 1. Добавление количества (1 шт)
             if single_buttons:
                 target = single_buttons[0]
                 if target.callback_data != last_clicked_callback:
                     last_clicked_callback = target.callback_data
                     client.trade_counter += 1
-                    print(f"📦 [Твинк {acc_id}] Клик: 'Добавить 1 шт.' (Загружено: {client.trade_counter}/10)", flush=True)
+                    print(f"📦 [Твинк {acc_id}] Клик: 'Добавить 1 шт.' ({client.trade_counter}/10)", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                     await asyncio.sleep(0.5) 
                 continue
 
-            # 2. Шаг открытия меню добавления телефона
+            # 2. Меню добавления телефона
             if add_buttons:
                 target = add_buttons[0]
                 if target.callback_data != last_clicked_callback:
                     last_clicked_callback = target.callback_data
-                    print(f"➕ [Твинк {acc_id}] Клик: 'Добавить телефон'", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                     await asyncio.sleep(0.3)
                 continue
 
-            # 3. НАДЕЖНЫЙ ВЫБОР СОСТОЯНИЯ
+            # 3. ВЫБОР СОСТОЯНИЯ
             if cond_buttons:
                 target = None
-                
                 if client.working_phones_empty:
                     for btn in cond_buttons:
-                        if "сломан" in btn.text.lower():
-                            target = btn
-                            break
+                        if "сломан" in btn.text.lower(): target = btn; break
                 else:
                     for btn in cond_buttons:
-                        if "рабоч" in btn.text.lower():
-                            target = btn
-                            break
+                        if "рабоч" in btn.text.lower(): target = btn; break
                     if not target:
                         for btn in cond_buttons:
-                            if "сломан" in btn.text.lower():
-                                target = btn
-                                client.working_phones_empty = True
-                                break
+                            if "сломан" in btn.text.lower(): target = btn; client.working_phones_empty = True; break
 
                 if target:
                     if "рабоч" in target.text.lower():
                         client.failed_working_clicks += 1
                         if client.failed_working_clicks >= 3:
-                            print(f"🪛 [Твинк {acc_id}] Рабочие пустые. Переключаюсь на СЛОМАННЫЕ!", flush=True)
                             client.working_phones_empty = True
                             for btn in cond_buttons:
-                                if "сломан" in btn.text.lower():
-                                    target = btn
-                                    break
+                                if "сломан" in btn.text.lower(): target = btn; break
 
                     last_clicked_callback = target.callback_data
-                    print(f"📱 [Твинк {acc_id}] Клик состояние: [{target.text}]", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                     await asyncio.sleep(0.5)
                 continue
 
-            # 4. Шаг выбора модели телефона
+            # 4. Выбор модели
             if item_buttons:
                 target = item_buttons[0]
                 for btn in item_buttons:
@@ -231,119 +218,108 @@ async def twink_collect_logic(client, acc_id):
                         break
                 if target.callback_data != last_clicked_callback:
                     last_clicked_callback = target.callback_data
-                    print(f"💎 [Твинк {acc_id}] Клик: Выбор модели [{target.text}]", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                     await asyncio.sleep(0.4) 
                 continue
 
         except Exception as e:
-            print(f"⚠️ Ошибка в цикле автосбора твинка {acc_id}: {e}", flush=True)
-        
+            print(f"⚠️ Ошибка автосбора твинка {acc_id}: {e}", flush=True)
         await asyncio.sleep(0.2)
-    
-    client.collecting = False
 
-# --- АКТИВНЫЙ ПОТОК ЖЕЛАНИЯ ГОТОВНОСТИ ДЛЯ ОСНОВЫ ---
-async def main_account_wait_loop(client):
-    global clients
-    print("⏳ [ОСНОВА] Запущен активный цикл ожидания завершения сбора твинков...", flush=True)
-    
-    for _ in range(100): # Максимум 100 секунд ждем
-        await asyncio.sleep(1.0)
-        
-        # Проверяем, занят ли кто-то из твинков сбором прямо сейчас
-        any_twink_collecting = False
-        for c in clients:
-            if hasattr(c, "me_id") and c.me_id != client.me_id:
-                if getattr(c, "collecting", False):
-                    any_twink_collecting = True
-                    break
-        
-        # Если все твинки закончили сбор (collecting == False)
-        if not any_twink_collecting:
-            # Берем актуальное сообщение из чата основы
-            msg = None
-            async for m in client.get_chat_history(bot_chat, limit=1):
-                msg = m
-                break
-            
-            if msg and has_button(msg, "готов"):
-                print("⚡ [ОСНОВА] Активный чекер подтвердил: Твинки свободны! Нажимаю 'Готов'.", flush=True)
-                await click(client, msg, "готов")
-                break
-
-
-# --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
+# --- ЕДИНЫЙ ОБРАБОТЧИК ДЛЯ НОВЫХ И ИЗМЕНЕННЫХ СООБЩЕНИЙ ---
 async def process_bot_logic(client, message, acc_id):
-    global clients
     if not message: return
 
-    if not hasattr(client, "collecting"): client.collecting = False
-    if not hasattr(client, "trade_counter"): client.trade_counter = 0
+    # Защита от кэширования Telegram: запрашиваем свежайшее состояние отредактированного сообщения бота
+    try:
+        fresh_msg = await client.get_messages(bot_chat, message.id)
+    except Exception as e:
+        fresh_msg = message
 
     # Автосбор прибыли с ТМайнинга
-    if message.reply_markup:
-        for row in message.reply_markup.inline_keyboard:
+    if fresh_msg.reply_markup:
+        for row in fresh_msg.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
                 if "собрать деньги" in btn.text.lower() or "farm_claim" in btn.callback_data.lower():
                     try:
-                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
+                        await client.request_callback_answer(fresh_msg.chat.id, fresh_msg.id, btn.callback_data, timeout=2)
                         print(f"💰 [Акк {acc_id}] Собрал прибыль с майнинга.", flush=True)
                         return
                     except: pass
 
-    if not message.text: return
-    text = message.text.lower()
+    if not fresh_msg.text: return
+    text = fresh_msg.text.lower()
 
     # --- ОБЩАЯ ДЛЯ ВСЕХ КНОПКА ПОДТВЕРДИТЬ ---
-    if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
+    if has_button(fresh_msg, "подтвердить") or has_button(fresh_msg, "trade_confirm"):
         print(f"🔗 [Аккаунт {acc_id}] Нажимаю 'Подтвердить обмен'!", flush=True)
-        await click(client, message, "trade_confirm")
-        await click(client, message, "подтвердить")
+        await click(client, fresh_msg, "trade_confirm")
+        await click(client, fresh_msg, "подтвердить")
         return
 
     if "подтвердите обмен" in text or "подтвердите" in text:
-        if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
-            await click(client, message, "trade_confirm")
-            await click(client, message, "подтвердить")
+        if has_button(fresh_msg, "подтвердить") or has_button(fresh_msg, "trade_confirm"):
+            await click(client, fresh_msg, "trade_confirm")
+            await click(client, fresh_msg, "подтвердить")
             return
 
     # --- ЛОГИКА ДЛЯ ТВИНКОВ (АКК 1, 3, 4, 5) ---
     if acc_id != 2:
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
-            if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                if client.collecting:
-                    return
+            if await click(client, fresh_msg, "trade_accept") or await click(client, fresh_msg, "принять"):
                 print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск сборщика...", flush=True)
                 client.trade_counter = 0
                 client.working_phones_empty = False 
                 client.failed_working_clicks = 0
-                client.collecting = True  
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
 
-        if "10/10" in text and has_button(message, "готов"):
-            print(f"⚡ [Твинк {acc_id}] Страховка: Нажимаю 'Готов' в главном меню.", flush=True)
-            await click(client, message, "готов")
-            client.collecting = False
+        if "10/10" in text and has_button(fresh_msg, "готов"):
+            await click(client, fresh_msg, "готов")
         return
 
-    # --- БЕЗУПРЕЧНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
+    # --- РЕАКЦИЯ ОСНОВЫ (АКК №2) НА РЕДАКТИРОВАНИЕ БОТА ---
     if acc_id == 2:
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
-            if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                print(f"✅ [ОСНОВА] Приняла трейд. Запускаю фоновый чекер готовности твинков...", flush=True)
-                # Запускаем ежесекундный мониторинг, чтобы основа не проспала завершение сбора твинка
-                asyncio.create_task(main_account_wait_loop(client))
+            if await click(client, fresh_msg, "trade_accept") or await click(client, fresh_msg, "принять"):
+                print(f"✅ [ОСНОВА] Трейд принят основы. Жду когда бот отредактирует сообщение при готовности твинка...", flush=True)
+            
+            # Если твинк УЖЕ был готов на момент принятия (крайне редкий случай)
+            main_name = account_names.get(2, "основа").lower()
+            twink_ready = False
+            for line in text.split("\n"):
+                if "✅" in line and main_name not in line:
+                    twink_ready = True
+                    break
+            
+            if twink_ready and main_name in text and f"{main_name} : ✅" not in text and f"{main_name}: ✅" not in text:
+                if has_button(fresh_msg, "готов"):
+                    print("⚡ [ОСНОВА] Твинк уже готов. Прожимаю 'Готов'!", flush=True)
+                    await click(client, fresh_msg, "готов")
             return
+
+        # Если сообщение ИЗМЕНИЛОСЬ (твинк добавил вещи или нажал Готов), срабатывает этот блок:
+        main_name = account_names.get(2, "основа").lower()
+        
+        twink_ready = False
+        for line in text.split("\n"):
+            # Если бот добавил зелёную галочку кому-то, но это строка НЕ нашей основы
+            if "✅" in line and main_name not in line:
+                twink_ready = True
+                break
+
+        # Если твинк нажал Готов (появилась галочка), а основа еще не готова
+        if twink_ready and main_name in text and f"{main_name} : ✅" not in text and f"{main_name}: ✅" not in text:
+            if has_button(fresh_msg, "готов"):
+                print("🎯 [ОСНОВА] Бот прислал EditMessage с готовностью твинка! Моментально жму 'Готов'.", flush=True)
+                await click(client, fresh_msg, "готов")
 
 # --- ХЕНДЛЕР ТЕКСТОВЫХ КОМАНД ---
 async def handle_my_messages(client, message):
     if not message.text: return
-    
     parts = message.text.split()
     if not parts: return
     cmd = parts[0].lower().strip()
@@ -373,7 +349,6 @@ async def handle_my_messages(client, message):
 # --- ФОН ЗАДАЧ И НЕЗАВИСИМЫЕ ТАЙМЕРЫ ---
 async def bg_tasks(client, acc_id):
     await asyncio.sleep(5)
-    
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
 
@@ -408,17 +383,15 @@ async def bg_tasks(client, acc_id):
             if card_timer >= 121:
                 try: 
                     await client.send_message(bot_chat, "ткарточка")
-                    print(f"🃏 [Акк {acc_id}] Прошла 121 минута. Отправил 'ткарточка'.", flush=True)
                 except: pass
                 card_timer = 0
-
         except: pass
         await asyncio.sleep(60)
 
 # --- СТАРТ ---
 async def start_bot():
-    global clients
-    print("🛠 Запуск фермы. Интегрирован активный фоновый чекер для Основы.", flush=True)
+    global clients, account_names
+    print("🛠 Перезапуск фермы. Логика полностью перестроена под EditMessage бота.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -438,15 +411,18 @@ async def start_bot():
             await c.invoke(raw.functions.updates.GetState())
             me = await c.get_me()
             c.me_id = me.id
+            
+            acc_id = i + 1
+            account_names[acc_id] = me.first_name.strip()
 
             async for _ in c.get_dialogs(limit=5): pass
             
-            acc_id = i + 1
             if acc_id == 2:
-                print(f"👑 ГЛАВНАЯ ОСНОВА (Аккаунт 2) запущена: @{me.username}", flush=True)
+                print(f"👑 ОСНОВА (Акк 2) | Имя: '{me.first_name}' подключен.", flush=True)
             else:
-                print(f"✅ Твинк-аккаунт {acc_id} запущен: @{me.username}", flush=True)
+                print(f"✅ Твинк {acc_id} | Имя: '{me.first_name}' подключен.", flush=True)
 
+            # Навешиваем один и тот же обработчик и на НОВЫЕ, и на ОТРЕДАКТИРОВАННЫЕ сообщения бота
             c.add_handler(handlers.MessageHandler(
                 lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
                 filters.chat(bot_chat)
@@ -461,7 +437,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт запущен! Теперь основа проверяет готовность твинков каждую секунду.", flush=True)
+    print("🚀 Ферма запущена! Теперь основа реагирует на каждое изменение сообщения без задержек.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
