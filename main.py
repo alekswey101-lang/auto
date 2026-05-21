@@ -191,17 +191,6 @@ async def twink_collect_logic(client, acc_id):
 
             if item_buttons:
                 target = item_buttons[0]
-                
-                # Фикс затупа: если бот открыл выбор РЕДКОСТИ (Хроматические и т.д.)
-                if "редкость" in text:
-                    if target.callback_data != last_clicked_callback:
-                        last_clicked_callback = target.callback_data
-                        print(f"🔮 [Твинк {acc_id}] Клик по редкости: [{target.text}]", flush=True)
-                        await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
-                        await asyncio.sleep(0.5)
-                    continue
-                
-                # Обычный выбор модели (когда уже находимся внутри редкости/категории)
                 for btn in item_buttons:
                     if "мистич" in btn.text.lower() or "редк" in btn.text.lower():
                         target = btn
@@ -272,7 +261,7 @@ async def process_bot_logic(client, message, acc_id):
             print(f"⚡ [Твинк {acc_id}] Страховка: Нажимаю 'Готов' в главном меню.", flush=True)
             await click(client, message, "готов")
             client.collecting = False
-            return
+        return
 
     # --- УМНАЯ И БЕЗОПАСНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
     if acc_id == 2:
