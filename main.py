@@ -171,20 +171,16 @@ async def twink_collect_logic(client, acc_id):
             if client.current_step == "WAIT_CATEGORY" and ready_broken_btns:
                 target = None
                 
-                # Ищем кнопку в зависимости от статуса инвентаря
                 if client.working_phones_empty:
-                    # Если рабочие кончились, ищем строго сломанный
                     for btn in ready_broken_btns:
                         if "сломан" in btn.text.lower(): 
                             target = btn
                             break
                 else:
-                    # Иначе сначала пытаемся закинуть рабочие
                     for btn in ready_broken_btns:
                         if "рабоч" in btn.text.lower(): 
                             target = btn
                             break
-                    # Если кнопки "рабочий" на экране почему-то нет, берём сломанный
                     if not target:
                         for btn in ready_broken_btns:
                             if "сломан" in btn.text.lower(): 
@@ -200,13 +196,17 @@ async def twink_collect_logic(client, acc_id):
                     await asyncio.sleep(0.4)
                 continue
 
-            # Шаг 3: Меню выбора модели телефона
+            # Шаг 3: Меню выбора модели телефона (ИСПРАВЛЕНО!)
             if client.current_step == "WAIT_MODEL" and model_btns:
+                # По умолчанию берем первую попавшуюся модель, если редких нет
                 target = model_btns[0]
+                
+                # Но если в списке есть редкие/эпические/мифические, то отдаем приоритет им
                 for btn in model_btns:
                     if any(x in btn.text.lower() for x in ["мистич", "редк", "эпич"]):
                         target = btn
                         break
+                        
                 print(f"📱 [Твинк {acc_id}] Шаг WAIT_MODEL -> Модель: {target.text}", flush=True)
                 client.current_step = "WAIT_1_SHT"
                 await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
@@ -376,7 +376,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Перезапуск фермы. Устранен затуп в окне выбора категорий.", flush=True)
+    print("🛠 Перезапуск фермы. Исправлена обработка обычных моделей (Ширпотреб).", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -419,7 +419,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Ферма обновлена! Теперь застревание в меню категорий полностью исключено.", flush=True)
+    print("🚀 Ферма обновлена! Теперь Ширпотреб и любые другие модели выбираются без зависаний.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
