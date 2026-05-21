@@ -120,12 +120,12 @@ async def twink_collect_logic(client, acc_id):
                 if has_button(msg, "готов"):
                     print(f"⚡ [Твинк {acc_id}] Вышли в меню. Нажимаю 'Готов'!", flush=True)
                     await click(client, msg, "готов")
-                    client.collecting = False  # СБОР ОКОНЧЕН
+                    client.collecting = False  
                     return 
 
                 if "готовность: ✅" in text or "✅" in text:
                     print(f"✨ [Твинк {acc_id}] Готовность подтверждена ботом. Выхожу из цикла сбора.", flush=True)
-                    client.collecting = False  # СБОР ОКОНЧЕН
+                    client.collecting = False  
                     return
                 
                 continue
@@ -243,6 +243,36 @@ async def twink_collect_logic(client, acc_id):
     
     client.collecting = False
 
+# --- АКТИВНЫЙ ПОТОК ЖЕЛАНИЯ ГОТОВНОСТИ ДЛЯ ОСНОВЫ ---
+async def main_account_wait_loop(client):
+    global clients
+    print("⏳ [ОСНОВА] Запущен активный цикл ожидания завершения сбора твинков...", flush=True)
+    
+    for _ in range(100): # Максимум 100 секунд ждем
+        await asyncio.sleep(1.0)
+        
+        # Проверяем, занят ли кто-то из твинков сбором прямо сейчас
+        any_twink_collecting = False
+        for c in clients:
+            if hasattr(c, "me_id") and c.me_id != client.me_id:
+                if getattr(c, "collecting", False):
+                    any_twink_collecting = True
+                    break
+        
+        # Если все твинки закончили сбор (collecting == False)
+        if not any_twink_collecting:
+            # Берем актуальное сообщение из чата основы
+            msg = None
+            async for m in client.get_chat_history(bot_chat, limit=1):
+                msg = m
+                break
+            
+            if msg and has_button(msg, "готов"):
+                print("⚡ [ОСНОВА] Активный чекер подтвердил: Твинки свободны! Нажимаю 'Готов'.", flush=True)
+                await click(client, msg, "готов")
+                break
+
+
 # --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
 async def process_bot_logic(client, message, acc_id):
     global clients
@@ -290,7 +320,7 @@ async def process_bot_logic(client, message, acc_id):
                 client.trade_counter = 0
                 client.working_phones_empty = False 
                 client.failed_working_clicks = 0
-                client.collecting = True  # СИГНАЛ ДЛЯ ОСНОВЫ: Твинк начал сбор!
+                client.collecting = True  
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
 
@@ -300,30 +330,14 @@ async def process_bot_logic(client, message, acc_id):
             client.collecting = False
         return
 
-    # --- УМНАЯ СИНХРОНИЗИРОВАННАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
+    # --- БЕЗУПРЕЧНАЯ ЛОГИКА ДЛЯ ОСНОВЫ (АКК №2) ---
     if acc_id == 2:
         if "предложение обмена" in text or "пришло предложение" in text:
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                print(f"✅ [ОСНОВА] Приняла трейд. Ожидаю наполнения от твинка...", flush=True)
-            return
-
-        # Проверяем, собирает ли СЕЙЧАС какой-либо твинк предметы
-        any_twink_collecting = False
-        for c in clients:
-            if hasattr(c, "me_id") and c.me_id != client.me_id: # Пропускаем саму основу
-                if hasattr(c, "collecting") and c.collecting:
-                    any_twink_collecting = True
-                    break
-
-        # Если кнопка Готов есть на экране, И ни один твинк больше НЕ занят сбором (все закончили)
-        if has_button(message, "готов"):
-            if not any_twink_collecting:
-                print(f"⚡ [ОСНОВА] Все твинки завершили сбор. Нажимаю 'Готов' на основе!", flush=True)
-                await click(client, message, "готов")
-            else:
-                # Если твинк еще собирает, основа просто ждет следующего обновления меню
-                pass
+                print(f"✅ [ОСНОВА] Приняла трейд. Запускаю фоновый чекер готовности твинков...", flush=True)
+                # Запускаем ежесекундный мониторинг, чтобы основа не проспала завершение сбора твинка
+                asyncio.create_task(main_account_wait_loop(client))
             return
 
 # --- ХЕНДЛЕР ТЕКСТОВЫХ КОМАНД ---
@@ -404,9 +418,8 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Включена прямая синхронизация Основы и Твинков через оперативную память.", flush=True)
+    print("🛠 Запуск фермы. Интегрирован активный фоновый чекер для Основы.", flush=True)
 
-    # Инициализируем массив клиентов заранее, чтобы основа могла видеть статусы твинков
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
         c = Client(
@@ -419,7 +432,6 @@ async def start_bot():
         c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
         clients.append(c)
 
-    # Запускаем клиентов по очереди
     for i, c in enumerate(clients):
         try:
             await c.start()
@@ -449,7 +461,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт успешно запущен с беспроводной синхронизацией! Основа нажмет 'Готов' ровно тогда, когда твинк закончит закидывать вещи.", flush=True)
+    print("🚀 Скрипт запущен! Теперь основа проверяет готовность твинков каждую секунду.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
