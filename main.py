@@ -146,6 +146,7 @@ async def twink_collect_logic(client, acc_id):
                     b_text = btn.text.lower()
                     c_data = (btn.callback_data or "").lower()
 
+                    # ЖЕСТКАЯ ФИЛЬТРАЦИЯ СИСТЕМНЫХ КНОПОК НАЗАД/ОТМЕНА
                     if any(x in c_data or x in b_text for x in ["назад", "back", "cancel", "отмена", "главное", "меню", "⬅️", "🔙", "далее", "➡️"]):
                         continue
                     if any(x in c_data for x in ["trade_confirm", "trade_ready", "trade_change", "trade_refresh"]):
@@ -158,6 +159,7 @@ async def twink_collect_logic(client, acc_id):
                     elif "cond" in c_data or "рабоч" in b_text or "сломан" in b_text:
                         ready_broken_btns.append(btn)
                     else:
+                        # В модели попадают только те кнопки, у которых в тексте/data нет слова "назад"
                         model_btns.append(btn)
 
             # Шаг 1: Находимся в главном меню трейда
@@ -196,18 +198,18 @@ async def twink_collect_logic(client, acc_id):
                     await asyncio.sleep(0.4)
                 continue
 
-            # Шаг 3: Меню выбора модели телефона (ИСПРАВЛЕНО!)
+            # Шаг 3: Меню выбора модели телефона
             if client.current_step == "WAIT_MODEL" and model_btns:
-                # По умолчанию берем первую попавшуюся модель, если редких нет
+                # Берем первую отфильтрованную модель
                 target = model_btns[0]
                 
-                # Но если в списке есть редкие/эпические/мифические, то отдаем приоритет им
+                # Если в списке есть редкие/эпические/мифические, то отдаем приоритет им
                 for btn in model_btns:
                     if any(x in btn.text.lower() for x in ["мистич", "редк", "эпич"]):
                         target = btn
                         break
                         
-                print(f"📱 [Твинк {acc_id}] Шаг WAIT_MODEL -> Модель: {target.text}", flush=True)
+                print(f"📱 [Твинк {acc_id}] Шаг WAIT_MODEL -> Кликаю по модели: '{target.text}' (Callback: {target.callback_data})", flush=True)
                 client.current_step = "WAIT_1_SHT"
                 await client.request_callback_answer(msg.chat.id, msg.id, target.callback_data, timeout=1)
                 await asyncio.sleep(0.4)
@@ -222,7 +224,7 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(0.4)
                 continue
 
-            # Корректировка шагов на случай непредвиденного обновления интерфейса ботом
+            # Корректировка шагов на случай непревидимого обновления интерфейса ботом
             if add_phone_btn and client.current_step != "MAIN":
                 client.current_step = "MAIN"
             elif ready_broken_btns and client.current_step == "MAIN":
@@ -376,7 +378,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Перезапуск фермы. Исправлена обработка обычных моделей (Ширпотреб).", flush=True)
+    print("🛠 Перезапуск фермы. Внедрена жесткая фильтрация кнопок 'Назад'.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -419,7 +421,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Ферма обновлена! Теперь Ширпотреб и любые другие модели выбираются без зависаний.", flush=True)
+    print("🚀 Ферма обновлена! Теперь кнопка 'Назад' точно не перехватит клик скрипта.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
