@@ -85,7 +85,6 @@ async def twink_collect_logic(client, acc_id):
     working_phones_depleted = False 
     consecutive_cond_clicks = 0
 
-    # По умолчанию ставим базовый лимит 10, но он изменится на 5, если кликнем на сломанные
     if not hasattr(client, "dynamic_limit"):
         client.dynamic_limit = 10 
 
@@ -105,7 +104,7 @@ async def twink_collect_logic(client, acc_id):
 
             text = msg.text.lower() if msg.text else ""
 
-            # ПРОВЕРКА ДИНАМИЧЕСКОГО ЛИМИТА (10 для рабочих / 5 для сломанных)
+            # ПРОВЕРКА ДИНАМИЧЕСКОГО ЛИМИТА
             if client.trade_counter >= client.dynamic_limit or f"занято слотов: {client.dynamic_limit}/{client.dynamic_limit}" in text or "занято слотов: 10/10" in text:
                 back_button_found = False
                 for row in msg.reply_markup.inline_keyboard:
@@ -216,7 +215,6 @@ async def twink_collect_logic(client, acc_id):
                     else:
                         continue
 
-                # ДИНАМИЧЕСКАЯ УСТАНОВКА ЛИМИТА В ЗАВИСИМОСТИ ОТ КАТЕГОРИИ
                 if target == work_btn:
                     client.dynamic_limit = 10
                     print(f"📱 [Твинк {acc_id}] Выбрана категория РАБОЧИЕ. Целевой лимит: 10 штук.", flush=True)
@@ -301,7 +299,7 @@ async def process_bot_logic(client, message, acc_id):
                     return
                 print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск сборщика...", flush=True)
                 client.trade_counter = 0
-                client.dynamic_limit = 10 # Сброс лимита на дефолт при старте нового трейда
+                client.dynamic_limit = 10 
                 client.collecting = True
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
@@ -320,6 +318,7 @@ async def process_bot_logic(client, message, acc_id):
                 print(f"✅ [ОСНОВА - Акк 2] Приняла трейд. Ожидаю готовности твинка...", flush=True)
             return
 
+        # Основа сканирует текст: если видит ✅ напротив твинка — она действует!
         twink_is_ready = False
         for line in text.split("\n"):
             for k, username in ACC_MACROS.items():
@@ -329,18 +328,20 @@ async def process_bot_logic(client, message, acc_id):
                     break
             if twink_is_ready: break
 
+        # Если твинк нажал Готов (появилась ✅), основа тоже прожимает Готов
         if twink_is_ready and has_button(message, "готов"):
             is_deep_sub_menu = has_button(message, "1 шт") or has_button(message, "рабоч") or has_button(message, "сломан")
             
             if not is_deep_sub_menu:
-                print(f"⚡ [ОСНОВА - Акк 2] Твинк подтвердил готовность (✅). Прожимаю 'Готов' на основе!", flush=True)
+                print(f"⚡ [ОСНОВА - Акк 2] Вижу готовность твинка (✅). Нажимаю 'Готов' на основе!", flush=True)
                 await click(client, message, "готов")
                 return
             else:
+                # Если основа случайно оказалась внутри подменю, она сама выйдет назад, чтобы нажать Готов
                 for row in message.reply_markup.inline_keyboard if message.reply_markup else []:
                     for btn in row:
                         if "вернуться назад" in btn.text.lower() or "назад" in btn.text.lower():
-                            print(f"⚖️ [ОСНОВА - Акк 2] Выхожу из подменю, чтобы нажать 'Готов'...", flush=True)
+                            print(f"⚖️ [ОСНОВА - Акк 2] Выхожу из подменю назад, чтобы нажать 'Готов'...", flush=True)
                             await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=1)
                             break
 
