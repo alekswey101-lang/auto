@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import re
 import asyncio
 import datetime
 import threading
@@ -40,7 +41,6 @@ ACC_MACROS = {
     "5": "ivannomor"
 }
 
-# --- ПЕРЕМЕННАЯ ДЛЯ СИНХРОНИЗАЦИИ ---
 twink_finished_event = asyncio.Event()
 
 # --- НАДЕЖНЫЙ КЛИКЕР ---
@@ -105,7 +105,6 @@ async def twink_collect_logic(client, acc_id):
 
             text = msg.text.lower() if msg.text else ""
 
-            # ПРОВЕРКА ДИНАМИЧЕСКОГО ЛИМИТА
             if client.trade_counter >= client.dynamic_limit or f"занято слотов: {client.dynamic_limit}/{client.dynamic_limit}" in text or "занято слотов: 10/10" in text:
                 back_button_found = False
                 for row in msg.reply_markup.inline_keyboard:
@@ -136,7 +135,6 @@ async def twink_collect_logic(client, acc_id):
                 
                 continue
 
-            # СБОР ПРЕДМЕТОВ
             buttons = []
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
@@ -184,7 +182,6 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(0.4)
                 continue
 
-            # УМНЫЙ ВЫБОР КАТЕГОРИИ С ОБРАБОТКОЙ АЛЕРТОВ
             if cond_buttons:
                 work_btn = None
                 broken_btn = None
@@ -309,7 +306,25 @@ async def process_bot_logic(client, message, acc_id):
     if not message.text: return
     text = message.text.lower()
 
-    # --- АВТОМАТИЧЕСКИЙ ПРИЕМ ЗАКАЗОВ НА РЕМОНТ (ДЛЯ ВСЕХ АККАУНТОВ) ---
+    # --- УМНЫЙ ПАРСИНГ ТАЙМЕРА КАРТОЧЕК ---
+    if "вы сможете выбить карту еще раз через" in text:
+        # Регулярное выражение ищет цифры перед "ч", "мин", "сек"
+        hours_match = re.search(r'(\d+)\s*ч', text)
+        minutes_match = re.search(r'(\d+)\s*мин', text)
+        seconds_match = re.search(r'(\d+)\s*сек', text)
+
+        hours = int(hours_match.group(1)) if hours_match else 0
+        minutes = int(minutes_match.group(1)) if minutes_match else 0
+        seconds = int(seconds_match.group(1)) if seconds_match else 0
+
+        total_sleep_seconds = (hours * 3600) + (minutes * 60) + seconds + 60 # Добавляем 1 минуту запаса
+        minutes_display = total_sleep_seconds // 60
+
+        print(f"⏳ [Акк {acc_id}] Бот сообщил о КД. Перенастраиваю таймер: жду {minutes_display} мин. до следующей попытки.", flush=True)
+        client.card_timer_override = total_sleep_seconds
+        return
+
+    # --- АВТОМАТИЧЕСКИЙ ПРИЕМ ЗАКАЗОВ НА РЕМОНТ ---
     if "вам пришел запрос на ремонт" in text or "запрос на ремонт" in text:
         if has_button(message, "принять заказ"):
             print(f"🛠 [Аккаунт {acc_id}] Обнаружен запрос на ремонт! Нажимаю 'Принять заказ'...", flush=True)
@@ -383,9 +398,13 @@ async def handle_my_messages(client, message):
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
 
-# --- ФОН ЗАДАЧ И ТАЙМЕРЫ ---
+# --- УМНЫЕ ФОНОВЫЕ ЗАДАЧИ И ТАЙМЕРЫ ---
 async def bg_tasks(client, acc_id):
+    client.card_timer_override = None
+    
+    # Сразу после деплоя отправляем пробную команду, чтобы запустить или прочитать КД
     await asyncio.sleep(5)
+    print(f"📡 [Акк {acc_id}] Проверяю статус таймера 'ткарточка' после запуска...", flush=True)
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
 
@@ -396,11 +415,30 @@ async def bg_tasks(client, acc_id):
     claimed_today = False
     iris_timer = 0
 
+    # Основной цикл (проверка каждую минуту)
     while True:
         try:
+            # Если сработал умный оверрид таймера от бота (мы узнали точное время КД)
+            if client.card_timer_override is not None and client.card_timer_override > 0:
+                # Спим порциями по 60 секунд, пока не выйдет всё КД
+                while client.card_timer_override > 0:
+                    await asyncio.sleep(60)
+                    client.card_timer_override -= 60
+                
+                # КД вышло — отправляем команду!
+                print(f"🎉 [Акк {acc_id}] Время ожидания КД истекло. Отправляю 'ткарточка'.", flush=True)
+                client.card_timer_override = None
+                try: await client.send_message(bot_chat, "ткарточка")
+                except: pass
+                
+                # Следующую проверку жестко планируем через 121 минуту (7260 сек)
+                client.card_timer_override = 7260
+                continue
+
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
+            # Сбор ежедневного майнинга в 00:10 по МСК
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
                     await client.send_message(bot_chat, "тмайнинг")
@@ -408,6 +446,7 @@ async def bg_tasks(client, acc_id):
             else:
                 if msk_now.hour == 0 and msk_now.minute == 11: claimed_today = False
 
+            # Таймер Ирис-борта (каждые 4 часа)
             if acc_id in [1, 2]:
                 iris_timer += 1
                 if iris_timer >= 240:
@@ -415,15 +454,21 @@ async def bg_tasks(client, acc_id):
                     except: pass
                     iris_timer = 0
 
-            if msk_now.minute == 0 and msk_now.hour % 2 == 0:
-                await client.send_message(bot_chat, "ткарточка")
-        except: pass
+            # Стандартная циклическая проверка раз в 2 часа (только если нет активного оверрида)
+            if client.card_timer_override is None:
+                if msk_now.minute == 0 and msk_now.hour % 2 == 0:
+                    print(f"⏰ [Акк {acc_id}] Плановый чётный час. Проверяю 'ткарточка'...", flush=True)
+                    await client.send_message(bot_chat, "ткарточка")
+
+        except Exception as e:
+            print(f"⚠️ Ошибка в фоновых задачах аккаунта {acc_id}: {e}", flush=True)
+        
         await asyncio.sleep(60)
 
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Включена прямая синхронизация аккаунтов.", flush=True)
+    print("🛠 Запуск фермы. Включена прямая синхронизация и умные таймеры карточек.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
