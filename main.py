@@ -292,14 +292,17 @@ async def process_bot_logic(client, message, acc_id):
     if not hasattr(client, "collecting"): client.collecting = False
     if not hasattr(client, "trade_counter"): client.trade_counter = 0
 
+    # АВТОКЛИКЕР НА СБОР ПРИБЫЛИ И ЕЖЕДНЕВНУЮ НАГРАДУ
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
-                if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать"]) or "farm_claim" in btn.callback_data.lower():
+                
+                # Клик по инлайн-кнопкам сбора денег или ежедневной награды
+                if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅"]) or "farm_claim" in btn.callback_data.lower():
                     try:
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
-                        print(f"💰 [Акк {acc_id}] Собрал прибыль с майнинга через инлайн-кнопку.", flush=True)
+                        print(f"🎁 [Акк {acc_id}] Успешно прожал инлайн-кнопку сбора/награды ({btn.text}).", flush=True)
                         return
                     except: pass
 
@@ -319,7 +322,7 @@ async def process_bot_logic(client, message, acc_id):
         total_sleep_seconds = (hours * 3600) + (minutes * 60) + seconds + 60 
         minutes_display = total_sleep_seconds // 60
 
-        print(f"⏳ [Акк {acc_id}] Бот сообщил о КД. Изменяю таймер карточек: жду {minutes_display} мин.", flush=True)
+        print(f"⏳ [Acc {acc_id}] Бот сообщил о КД. Изменяю таймер карточек: жду {minutes_display} мин.", flush=True)
         client.card_timer_override = total_sleep_seconds
         return
 
@@ -430,11 +433,10 @@ async def card_timer_loop(client, acc_id):
         
         await asyncio.sleep(30)
 
-# --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ (МАЙНИНГ И ИРИС) ---
+# --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ (МАЙНИНГ, ИРИС И НАГРАДЫ) ---
 async def bg_tasks(client, acc_id):
     asyncio.create_task(card_timer_loop(client, acc_id))
 
-    # Первичная проверка майнинга при старте деплоя (только тмайнинг)
     await asyncio.sleep(8)
     print(f"🪙 [Акк {acc_id}] Проверяю статус майнинга при запуске через 'тмайнинг'...", flush=True)
     try: await client.send_message(bot_chat, "тмайнинг")
@@ -445,6 +447,7 @@ async def bg_tasks(client, acc_id):
         except: pass
 
     claimed_today = False
+    reward_claimed_today = False
     iris_timer = 0
 
     while True:
@@ -452,7 +455,17 @@ async def bg_tasks(client, acc_id):
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
-            # Сбор ежедневного дохода в 00:10 по МСК
+            # --- ЕЖЕДНЕВНАЯ НАГРАДА В 03:00 по КЗ (01:00 по МСК) ---
+            if msk_now.hour == 1 and msk_now.minute == 0:
+                if not reward_claimed_today:
+                    print(f"🌟 [Акк {acc_id}] Время ежедневной награды (03:00 КЗ / 01:00 МСК)! Отправляю команду...", flush=True)
+                    await client.send_message(bot_chat, "ежедневная награда")
+                    reward_claimed_today = True
+            else:
+                if msk_now.hour == 1 and msk_now.minute == 2:
+                    reward_claimed_today = False
+
+            # Сбор ежедневного майнинга в 00:10 по МСК
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
                     print(f"🎰 [Акк {acc_id}] Время ежедневного сбора! Отправляю тмайнинг...", flush=True)
@@ -483,7 +496,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Включена отправка исключительно 'тмайнинг'.", flush=True)
+    print("🛠 Запуск фермы. Включен автосбор ежедневной награды в 03:00 по КЗ.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -528,7 +541,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт запущен! Настройки применились.", flush=True)
+    print("🚀 Скрипт запущен! Все новые функции активны.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
