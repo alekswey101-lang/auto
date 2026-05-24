@@ -296,10 +296,10 @@ async def process_bot_logic(client, message, acc_id):
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
-                if "собрать деньги" in btn.text.lower() or "farm_claim" in btn.callback_data.lower():
+                if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать"]) or "farm_claim" in btn.callback_data.lower():
                     try:
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
-                        print(f"💰 [Акк {acc_id}] Собрал прибыль с майнинга.", flush=True)
+                        print(f"💰 [Акк {acc_id}] Собрал прибыль с майнинга через инлайн-кнопку.", flush=True)
                         return
                     except: pass
 
@@ -308,7 +308,6 @@ async def process_bot_logic(client, message, acc_id):
 
     # --- УМНЫЙ ПАРСИНГ ТАЙМЕРА КАРТОЧЕК ---
     if "вы сможете выбить карту еще раз через" in text:
-        # Регулярное выражение ищет цифры перед "ч", "мин", "сек"
         hours_match = re.search(r'(\d+)\s*ч', text)
         minutes_match = re.search(r'(\d+)\s*мин', text)
         seconds_match = re.search(r'(\d+)\s*сек', text)
@@ -317,10 +316,10 @@ async def process_bot_logic(client, message, acc_id):
         minutes = int(minutes_match.group(1)) if minutes_match else 0
         seconds = int(seconds_match.group(1)) if seconds_match else 0
 
-        total_sleep_seconds = (hours * 3600) + (minutes * 60) + seconds + 60 # Добавляем 1 минуту запаса
+        total_sleep_seconds = (hours * 3600) + (minutes * 60) + seconds + 60 
         minutes_display = total_sleep_seconds // 60
 
-        print(f"⏳ [Акк {acc_id}] Бот сообщил о КД. Перенастраиваю таймер: жду {minutes_display} мин. до следующей попытки.", flush=True)
+        print(f"⏳ [Акк {acc_id}] Бот сообщил о КД. Изменяю таймер карточек: жду {minutes_display} мин.", flush=True)
         client.card_timer_override = total_sleep_seconds
         return
 
@@ -398,14 +397,47 @@ async def handle_my_messages(client, message):
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         await client.send_message(bot_chat, bot_cmd)
 
-# --- УМНЫЕ ФОНОВЫЕ ЗАДАЧИ И ТАЙМЕРЫ ---
-async def bg_tasks(client, acc_id):
-    client.card_timer_override = None
-    
-    # Сразу после деплоя отправляем пробную команду, чтобы запустить или прочитать КД
+# --- ИЗОЛИРОВАННЫЙ ТАЙМЕР ДЛЯ КАРТОЧЕК ---
+async def card_timer_loop(client, acc_id):
     await asyncio.sleep(5)
-    print(f"📡 [Акк {acc_id}] Проверяю статус таймера 'ткарточка' после запуска...", flush=True)
+    print(f"📡 [Акк {acc_id}] Первичный запуск: проверяю статус 'ткарточка'...", flush=True)
     try: await client.send_message(bot_chat, "ткарточка")
+    except: pass
+
+    while True:
+        try:
+            if client.card_timer_override is not None and client.card_timer_override > 0:
+                print(f"💤 [Акк {acc_id}] Логика карточек засыпает на {client.card_timer_override // 60} мин. КД...", flush=True)
+                await asyncio.sleep(client.card_timer_override)
+                
+                print(f"🎉 [Акк {acc_id}] Время КД вышло! Отправляю команду 'ткарточка'.", flush=True)
+                client.card_timer_override = None
+                try: await client.send_message(bot_chat, "ткарточка")
+                except: pass
+                
+                client.card_timer_override = 7260
+                continue
+
+            utc_now = datetime.datetime.utcnow()
+            msk_now = utc_now + datetime.timedelta(hours=3)
+            if msk_now.minute == 0 and msk_now.hour % 2 == 0:
+                print(f"⏰ [Акк {acc_id}] Плановый чётный час. Проверяю 'ткарточка'...", flush=True)
+                try: await client.send_message(bot_chat, "ткарточка")
+                except: pass
+
+        except Exception as e:
+            print(f"⚠️ Ошибка в цикле карточек аккаунта {acc_id}: {e}", flush=True)
+        
+        await asyncio.sleep(30)
+
+# --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ (МАЙНИНГ И ИРИС) ---
+async def bg_tasks(client, acc_id):
+    asyncio.create_task(card_timer_loop(client, acc_id))
+
+    # Первичная проверка майнинга при старте деплоя (только тмайнинг)
+    await asyncio.sleep(8)
+    print(f"🪙 [Акк {acc_id}] Проверяю статус майнинга при запуске через 'тмайнинг'...", flush=True)
+    try: await client.send_message(bot_chat, "тмайнинг")
     except: pass
 
     if acc_id in [1, 2]:
@@ -415,38 +447,27 @@ async def bg_tasks(client, acc_id):
     claimed_today = False
     iris_timer = 0
 
-    # Основной цикл (проверка каждую минуту)
     while True:
         try:
-            # Если сработал умный оверрид таймера от бота (мы узнали точное время КД)
-            if client.card_timer_override is not None and client.card_timer_override > 0:
-                # Спим порциями по 60 секунд, пока не выйдет всё КД
-                while client.card_timer_override > 0:
-                    await asyncio.sleep(60)
-                    client.card_timer_override -= 60
-                
-                # КД вышло — отправляем команду!
-                print(f"🎉 [Акк {acc_id}] Время ожидания КД истекло. Отправляю 'ткарточка'.", flush=True)
-                client.card_timer_override = None
-                try: await client.send_message(bot_chat, "ткарточка")
-                except: pass
-                
-                # Следующую проверку жестко планируем через 121 минуту (7260 сек)
-                client.card_timer_override = 7260
-                continue
-
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
-            # Сбор ежедневного майнинга в 00:10 по МСК
+            # Сбор ежедневного дохода в 00:10 по МСК
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
+                    print(f"🎰 [Акк {acc_id}] Время ежедневного сбора! Отправляю тмайнинг...", flush=True)
                     await client.send_message(bot_chat, "тмайнинг")
                     claimed_today = True
             else:
-                if msk_now.hour == 0 and msk_now.minute == 11: claimed_today = False
+                if msk_now.hour == 0 and msk_now.minute == 11: 
+                    claimed_today = False
 
-            # Таймер Ирис-борта (каждые 4 часа)
+            # Плановый цикличный сбор майнинга каждые 4 часа
+            if msk_now.hour % 4 == 0 and msk_now.minute == 5:
+                print(f"🪙 [Акк {acc_id}] Плановый сбор майнинга. Отправляю 'тмайнинг'...", flush=True)
+                await client.send_message(bot_chat, "тмайнинг")
+
+            # Таймер Ирис-бота (каждые 4 часа)
             if acc_id in [1, 2]:
                 iris_timer += 1
                 if iris_timer >= 240:
@@ -454,21 +475,15 @@ async def bg_tasks(client, acc_id):
                     except: pass
                     iris_timer = 0
 
-            # Стандартная циклическая проверка раз в 2 часа (только если нет активного оверрида)
-            if client.card_timer_override is None:
-                if msk_now.minute == 0 and msk_now.hour % 2 == 0:
-                    print(f"⏰ [Акк {acc_id}] Плановый чётный час. Проверяю 'ткарточка'...", flush=True)
-                    await client.send_message(bot_chat, "ткарточка")
-
         except Exception as e:
-            print(f"⚠️ Ошибка в фоновых задачах аккаунта {acc_id}: {e}", flush=True)
+            print(f"⚠️ Ошибка в фоновых задачах майнинга {acc_id}: {e}", flush=True)
         
         await asyncio.sleep(60)
 
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Включена прямая синхронизация и умные таймеры карточек.", flush=True)
+    print("🛠 Запуск фермы. Включена отправка исключительно 'тмайнинг'.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -488,6 +503,7 @@ async def start_bot():
             clients.append(c)
             me = await c.get_me()
             c.me_id = me.id
+            c.card_timer_override = None
 
             async for _ in c.get_dialogs(limit=5): pass
             
@@ -512,7 +528,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт запущен! Твинки и основа синхронизированы напрямую.", flush=True)
+    print("🚀 Скрипт запущен! Настройки применились.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
