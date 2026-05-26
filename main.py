@@ -85,6 +85,7 @@ async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Фоновый автосбор успешно запущен.", flush=True)
     last_clicked_callback = "" 
     working_phones_depleted = False 
+    stuck_counter = 0  # Счетчик зависания на одном месте
 
     if not hasattr(client, "dynamic_limit"):
         client.dynamic_limit = 10 
@@ -104,6 +105,16 @@ async def twink_collect_logic(client, acc_id):
                 continue
 
             text = msg.text.lower() if msg.text else ""
+
+            # Проверка на жесткое зависание в меню выбора
+            if "выберите категорию телефона" in text:
+                stuck_counter += 1
+                if stuck_counter > 4:
+                    print(f"🔄 [Твинк {acc_id}] Похоже, меню выбора категорий зависло. Сбрасываю триггеры.", flush=True)
+                    last_clicked_callback = ""
+                    stuck_counter = 0
+            else:
+                stuck_counter = 0
 
             if client.trade_counter >= client.dynamic_limit or f"занято слотов: {client.dynamic_limit}/{client.dynamic_limit}" in text or "занято слотов: 10/10" in text:
                 back_button_found = False
@@ -159,7 +170,7 @@ async def twink_collect_logic(client, acc_id):
                     add_buttons.append(btn)
                 elif "single" in c_data or "1 шт" in b_text or "add_single" in c_data:
                     single_buttons.append(btn)
-                elif "cond" in c_data or "рабоч" in b_text or "сломан" in b_text:
+                elif "рабоч" in b_text or "сломан" in b_text or "phone_cond" in c_data:
                     cond_buttons.append(btn)
                 else:
                     item_buttons.append(btn)
@@ -209,10 +220,12 @@ async def twink_collect_logic(client, acc_id):
                         if res and hasattr(res, 'message') and ("нет" in res.message.lower() or "доступных" in res.message.lower()):
                             print(f"⚠️ [Твинк {acc_id}] Бот вернул alert: '{res.message}'. Переключаюсь на СЛОМАННЫЕ!", flush=True)
                             working_phones_depleted = True
+                            last_clicked_callback = ""
                             continue
                     except:
                         print(f"⚠️ [Твинк {acc_id}] Ошибка клика рабочих. Переключаюсь на СЛОМАННЫЕ.", flush=True)
                         working_phones_depleted = True
+                        last_clicked_callback = ""
                         continue
                 else:
                     client.dynamic_limit = 5
@@ -319,6 +332,11 @@ async def process_bot_logic(client, message, acc_id):
         seconds = int(seconds_match.group(1)) if seconds_match else 0
 
         total_sleep_seconds = (hours * 3600) + (minutes * 60) + seconds + 60 
+        
+        # Защита от микро-таймеров меньше 3 минут, чтобы избежать спама
+        if total_sleep_seconds < 180:
+            total_sleep_seconds = 180
+
         minutes_display = total_sleep_seconds // 60
 
         print(f"⏳ [Acc {acc_id}] Бот сообщил о КД. Изменяю таймер карточек: жду {minutes_display} мин.", flush=True)
@@ -432,7 +450,7 @@ async def card_timer_loop(client, acc_id):
         
         await asyncio.sleep(30)
 
-# --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ (МАЙНИНГ, ИРИС И НАГРАДЫ) ---
+# --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ ---
 async def bg_tasks(client, acc_id):
     asyncio.create_task(card_timer_loop(client, acc_id))
 
@@ -490,7 +508,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Настроен строгий сбор наград и майнинга по времени.", flush=True)
+    print("🛠 Запуск фермы. Исправлено зависание категорий обмена.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -535,7 +553,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт запущен! Все новые интервалы времени работают.", flush=True)
+    print("🚀 Скрипт запущен! Баги с меню устранены.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
