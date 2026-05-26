@@ -298,7 +298,6 @@ async def process_bot_logic(client, message, acc_id):
             for btn in row:
                 if not btn.callback_data: continue
                 
-                # Клик по инлайн-кнопкам сбора денег или ежедневной награды
                 if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅"]) or "farm_claim" in btn.callback_data.lower():
                     try:
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
@@ -465,7 +464,7 @@ async def bg_tasks(client, acc_id):
                 if msk_now.hour == 1 and msk_now.minute == 2:
                     reward_claimed_today = False
 
-            # Сбор ежедневного майнинга в 00:10 по МСК
+            # --- СБОР МАЙНИНГА СТРОГО В 02:10 по КЗ (00:10 по МСК) ---
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
                     print(f"🎰 [Акк {acc_id}] Время ежедневного сбора! Отправляю тмайнинг...", flush=True)
@@ -474,11 +473,6 @@ async def bg_tasks(client, acc_id):
             else:
                 if msk_now.hour == 0 and msk_now.minute == 11: 
                     claimed_today = False
-
-            # Плановый цикличный сбор майнинга каждые 4 часа
-            if msk_now.hour % 4 == 0 and msk_now.minute == 5:
-                print(f"🪙 [Акк {acc_id}] Плановый сбор майнинга. Отправляю 'тмайнинг'...", flush=True)
-                await client.send_message(bot_chat, "тмайнинг")
 
             # Таймер Ирис-бота (каждые 4 часа)
             if acc_id in [1, 2]:
@@ -496,7 +490,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск фермы. Включен автосбор ежедневной награды в 03:00 по КЗ.", flush=True)
+    print("🛠 Запуск фермы. Настроен строгий сбор наград и майнинга по времени.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -541,7 +535,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт запущен! Все новые функции активны.", flush=True)
+    print("🚀 Скрипт запущен! Все новые интервалы времени работают.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
