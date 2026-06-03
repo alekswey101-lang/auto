@@ -26,6 +26,8 @@ threading.Thread(
 # --- CONFIG ---
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
+
+# Стандартные 5 сессий (в SESSION_5 просто вставь строку новой сессии)
 SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
@@ -33,15 +35,17 @@ iris_bot_chat = "iris_moon_bot"
 
 clients = []
 
+# Обновленные макросы (5-й аккаунт: @kuznecovvb | ID: 8357881344)
 ACC_MACROS = {
     "1": "boymorale",
     "2": "tintedwindow",
     "3": "cutemald",
     "4": "dennyom",
-    "5": "ivannomor"
+    "5": "kuznecovvb"
 }
 
 twink_finished_event = asyncio.Event()
+AUTO_TRADE_ENABLED = True  # Изначально автотрейд включен
 
 # --- НАДЕЖНЫЙ КЛИКЕР ---
 async def click(client, message, keyword: str) -> bool:
@@ -84,7 +88,6 @@ def has_button(message, keyword: str) -> bool:
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Фоновый автосбор НАЧАТ С НУЛЯ.", flush=True)
     
-    # ПРИНУДИТЕЛЬНЫЙ СБРОС СЧЕТЧИКА ДЛЯ НОВОГО ТРЕЙДА
     client.trade_counter = 0
     client.dynamic_limit = 10 
     
@@ -106,7 +109,7 @@ async def twink_collect_logic(client, acc_id):
 
             text = msg.text.lower() if msg.text else ""
 
-            # --- БЛОК 1: ПРОВЕРКА ЛИМИТОВ СЛОТОВ (СТРОГО ПОСЛЕ СБРОСА) ---
+            # --- БЛОК 1: ПРОВЕРКА ЛИМИТОВ СЛОТОВ ---
             if client.trade_counter >= client.dynamic_limit or "занято слотов" in text:
                 if has_button(msg, "готов"):
                     print(f"⚡ [Твинк {acc_id}] Трейд успешно заполнен ({client.trade_counter}). Нажимаю Готов!", flush=True)
@@ -231,6 +234,12 @@ async def twink_collect_logic(client, acc_id):
 async def basis_sync_loop(basis_client):
     while True:
         await twink_finished_event.wait()
+        
+        if not AUTO_TRADE_ENABLED:
+            twink_finished_event.clear()
+            await asyncio.sleep(1)
+            continue
+            
         print("🔗 [СИНХРОНИЗАЦИЯ] Твинк закончил сбор. Основа прожимает готовность...", flush=True)
         
         for _ in range(5):
@@ -293,6 +302,9 @@ async def process_bot_logic(client, message, acc_id):
             await click(client, message, "принять заказ")
             return
 
+    if not AUTO_TRADE_ENABLED:
+        return
+
     if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
         await click(client, message, "trade_confirm")
         await click(client, message, "подтвердить")
@@ -324,6 +336,7 @@ async def process_bot_logic(client, message, acc_id):
 
 # --- ХЕНДЛЕР КОМАНД ЮЗЕРА ---
 async def handle_my_messages(client, message):
+    global AUTO_TRADE_ENABLED
     if not message.text: return
     parts = message.text.split()
     if not parts: return
@@ -332,6 +345,17 @@ async def handle_my_messages(client, message):
     if cmd == ".ping":
         try: await message.edit("🚀 Юзербот активен!")
         except: pass
+        return
+
+    if cmd == ".at":
+        AUTO_TRADE_ENABLED = not AUTO_TRADE_ENABLED
+        status_text = "✅ ВКЛЮЧЕН" if AUTO_TRADE_ENABLED else "❌ ВЫКЛЮЧЕН"
+        try:
+            await message.edit(f"🤖 **Автотрейд сейчас:** {status_text}")
+            await asyncio.sleep(3)
+            await message.delete()
+        except: pass
+        print(f"⚙️ Глобальный статус автотрейда изменен: {AUTO_TRADE_ENABLED}", flush=True)
         return
 
     if cmd in [".trade", ".t", ".т"]:
@@ -423,7 +447,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Перезапуск фермы. Исправлен баг моментального прожатия Готово во 2-м трейде.", flush=True)
+    print("🛠 Перезапуск фермы. В SESSION_5 теперь ожидается новый рабочий аккаунт.", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -452,7 +476,7 @@ async def start_bot():
                 print(f"👑 ГЛАВНАЯ ОСНОВА (Аккаунт 2) запущена: @{me.username}", flush=True)
                 asyncio.create_task(basis_sync_loop(c))
             else:
-                print(f"✅ Твинк-аккаунт {acc_id} запущен: @{me.username}", flush=True)
+                print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
             c.add_handler(handlers.MessageHandler(
                 lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
@@ -468,7 +492,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт обновлен. Теперь счетчики обнуляются корректно!", flush=True)
+    print("🚀 Скрипт готов к работе. Переключатель .at активен.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
