@@ -440,6 +440,13 @@ async def bg_tasks(client, acc_id):
         except: pass
         await asyncio.sleep(60)
 
+# --- ВЫНЕСЕННЫЕ ФУНКЦИИ ХЕНДЛЕРОВ (ЧТОБЫ ИЗБЕЖАТЬ СЛИШКОМ ДЛИННЫХ СТРОК) ---
+def get_msg_handler(acc_id):
+    return lambda c, m: asyncio.create_task(process_bot_logic(c, m, acc_id))
+
+def get_edit_handler(acc_id):
+    return lambda c, m: asyncio.create_task(process_bot_logic(c, m, acc_id))
+
 # --- ЗАПУСК КЛИЕНТОВ PYROGRAM В ОТДЕЛЬНОМ EVENT LOOP ---
 async def start_pyrogram_clients():
     global clients
@@ -469,9 +476,3 @@ async def start_pyrogram_clients():
             acc_id = i + 1
             if acc_id == 2:
                 print(f"👑 ГЛАВНАЯ ОСНОВА (Аккаунт 2) запущена: @{me.username}", flush=True)
-                asyncio.create_task(basis_sync_loop(c))
-            else:
-                print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
-
-            c.add_handler(handlers.MessageHandler(
-                lambda client, message, a_id=acc_id: process_bot_logic(client, messag
