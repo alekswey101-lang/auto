@@ -74,9 +74,9 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- УМНЫЙ АВТОСБОР (БЕЗ СБОЕВ СЧЕТЧИКА) ---
+# --- ИСПРАВЛЕННЫЙ АВТОСБОР (БЕЗ ФАНТОМНЫХ ГАЛОЧЕК) ---
 async def twink_collect_logic(client, acc_id):
-    print(f"⚡ [Твинк {acc_id}] Жесткий запуск автосбора. Защита от фантомных сообщений.", flush=True)
+    print(f"⚡ [Твинк {acc_id}] Старт глубокого автосбора без ложных лимитов.", flush=True)
     
     working_phones_depleted = False 
     empty_rarities = set()  
@@ -95,20 +95,19 @@ async def twink_collect_logic(client, acc_id):
 
             text = msg.text.lower() if msg.text else ""
 
-            # Считаем количество галочек
-            current_selected = text.count("✅") + sum(1 for row in msg.reply_markup.inline_keyboard for b in row if "✅" in b.text)
-            
-            if "занято слотов" in text or "слотов: 10/10" in text or "слотов: 5/5" in text:
-                if has_button(msg, "готов"):
-                    print(f"⚡ [Твинк {acc_id}] Слоты полные. Нажимаю Готов!", flush=True)
-                    await click(client, msg, "готов")
-                    twink_finished_event.set()
-                    client.collecting = False 
-                    return 
-
-            if "готовность: ✅" in text:
+            # Если трейд завершен или нас выкинуло
+            if "готовность: ✅" in text and not has_button(msg, "добавить телефон"):
                 twink_finished_event.set()
                 client.collecting = False
+                return
+
+            # Проверяем заполненность слотов из текста
+            slots_full = "занято слотов" in text or "слотов: 10/10" in text or "слотов: 5/5" in text
+            if slots_full and has_button(msg, "готов"):
+                print(f"⚡ [Твинк {acc_id}] Все слоты заполнены! Нажимаю Готов.", flush=True)
+                await click(client, msg, "готов")
+                twink_finished_event.set()
+                client.collecting = False 
                 return
 
             all_buttons = []
@@ -119,9 +118,10 @@ async def twink_collect_logic(client, acc_id):
 
             action_buttons = [b for b in all_buttons if not any(x in b.text.lower() or x in b.callback_data.lower() for x in ["назад", "back", "меню", "отмена", "готов"])]
 
-            # СЛУЧАЙ 1: Экран выбора моделей
+            # СЛУЧАЙ 1: Экран выбора моделей телефонов (Выбор пачки)
             if "выберите телефон" in text or has_button(msg, "добавить выбранное"):
                 if "нет доступных" in text or "отсутствуют" in text or not action_buttons:
+                    print(f"📭 [Твинк {acc_id}] Тут пусто. Возвращаюсь.", flush=True)
                     if last_clicked_rarity:
                         empty_rarities.add(last_clicked_rarity)
                     await click(client, msg, "назад")
@@ -134,21 +134,23 @@ async def twink_collect_logic(client, acc_id):
                     await asyncio.sleep(0.8)
                     continue
 
-                add_selected_btn = next((b for b in all_buttons if "добавить выбранное" in b.text.lower()), None)
+                # Считаем галочки ТОЛЬКО на кнопках моделей
                 phone_buttons = [b for b in action_buttons if "быстрый выбор" not in b.text.lower() and "добавить" not in b.text.lower()]
+                current_selected = sum(1 for b in phone_buttons if "✅" in b.text)
                 available_phones = [b for b in phone_buttons if "✅" not in b.text.lower()]
 
                 max_limit = 5 if working_phones_depleted else 10
 
-                if available_phones and current_selected < max_limit:
+                if available_phones and current_selected < max_limit and not slots_full:
                     target_phone = available_phones[0]
-                    print(f"📱 [Твинк {acc_id}] Выбираю: {target_phone.text} (Выбрано в пачке: {current_selected})", flush=True)
+                    print(f"📱 [Твинк {acc_id}] Клик по модели: {target_phone.text} (Выбрано в пачке: {current_selected})", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, target_phone.callback_data, timeout=2)
                     await asyncio.sleep(0.5)
                     continue
                 else:
+                    add_selected_btn = next((b for b in all_buttons if "добавить выбранное" in b.text.lower()), None)
                     if add_selected_btn:
-                        print(f"📥 [Твинк {acc_id}] Сбор из этой редкости завершен. Сохраняю выбранное.", flush=True)
+                        print(f"📥 [Твинк {acc_id}] Выгружаю выбранные телефоны в трейд.", flush=True)
                         if last_clicked_rarity:
                             empty_rarities.add(last_clicked_rarity)
                         await client.request_callback_answer(msg.chat.id, msg.id, add_selected_btn.callback_data, timeout=2)
@@ -161,13 +163,7 @@ async def twink_collect_logic(client, acc_id):
                 available_rarities = [b for b in rarity_buttons if b.text.lower() not in empty_rarities]
 
                 if not available_rarities:
-                    print(f"🔄 [Твинк {acc_id}] Все редкости в этой категории проверены. Жму назад.", flush=True)
-                    if working_phones_depleted:
-                        if has_button(msg, "готов"):
-                            await click(client, msg, "готов")
-                            twink_finished_event.set()
-                            client.collecting = False
-                            return
+                    print(f"🔄 [Твинк {acc_id}] Редкости исчерпаны. Иду назад.", flush=True)
                     await click(client, msg, "назад")
                     working_phones_depleted = True
                     await asyncio.sleep(1.5)
@@ -176,12 +172,12 @@ async def twink_collect_logic(client, acc_id):
                 target_rarity = available_rarities[0]
                 last_clicked_rarity = target_rarity.text.lower()
                 
-                print(f"🔮 [Твинк {acc_id}] Захожу в редкость: {target_rarity.text}", flush=True)
+                print(f"🔮 [Твинк {acc_id}] Открываю редкость: {target_rarity.text}", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, target_rarity.callback_data, timeout=2)
                 await asyncio.sleep(1.2)
                 continue
 
-            # СЛУЧАЙ 3: Экран выбора состояния
+            # СЛУЧАЙ 3: Экран выбора состояния (Рабочие / Сломанные)
             elif "выберите категорию" in text or "категорию телефона" in text:
                 work_btn = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
                 broken_btn = next((b for b in action_buttons if "сломан" in b.text.lower()), None)
@@ -193,25 +189,26 @@ async def twink_collect_logic(client, acc_id):
                 else:
                     target_btn = broken_btn or work_btn
 
-                print(f"🛠 [Твинк {acc_id}] Выбираю категорию: {target_btn.text}", flush=True)
+                print(f"🛠 [Твинк {acc_id}] Захожу в категорию: {target_btn.text}", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=2)
                 await asyncio.sleep(1.2)
                 continue
 
             # СЛУЧАЙ 4: Главный экран трейда
             else:
-                if "слотов: 10/10" in text or "слотов: 9/10" in text:
-                    if has_button(msg, "готов"):
-                        await click(client, msg, "готов")
-                        twink_finished_event.set()
-                        client.collecting = False
-                        return
-
                 add_btn = next((b for b in all_buttons if "добавить телефон" in b.text.lower() or "add_phone" in b.callback_data.lower()), None)
                 if add_btn:
+                    print(f"➕ [Твинк {acc_id}] На главном экране трейда. Нажимаю 'Добавить телефон'.", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, add_btn.callback_data, timeout=2)
                     await asyncio.sleep(1.2)
                     continue
+                
+                # Если кнопок добавления нет, но есть кнопка Готов (значит мы застряли на финалке)
+                if has_button(msg, "готов"):
+                    await click(client, msg, "готов")
+                    twink_finished_event.set()
+                    client.collecting = False
+                    return
 
         except Exception as e:
             print(f"⚠️ Ошибка автосбора твинка {acc_id}: {e}", flush=True)
@@ -473,18 +470,15 @@ async def start_pyrogram_clients():
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
     print("🚀 Все юзерботы успешно запущены в фоне!", flush=True)
 
-# Запуск клиентов в отдельном asyncio потоке, чтобы не мешать Flask
 def run_async_loop():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(start_pyrogram_clients())
     loop.run_forever()
 
-# Запускаем фоновый поток для телеграма перед стартом Flask
 threading.Thread(target=run_async_loop, daemon=True).start()
 
 if __name__ == "__main__":
-    # Flask становится главным процессом, слушающим порт от Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-                
+        
