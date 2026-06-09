@@ -29,7 +29,7 @@ ACC_MACROS = {
 twink_finished_event = asyncio.Event()
 AUTO_TRADE_ENABLED = True
 
-# --- ЖЕЛЕЗОБЕТОННЫЙ КЛИК ЧЕРЕЗ RAW API ---
+# --- ИСПРАВЛЕННЫЙ УНИВЕРСАЛЬНЫЙ RAW КЛИК (ИЩЕТ ПО ТЕКСТУ И DATA) ---
 async def click(client, message, keyword: str) -> bool:
     try:
         if not message or not message.reply_markup:
@@ -42,9 +42,9 @@ async def click(client, message, keyword: str) -> bool:
                 t_low = btn.text.lower().replace("✅", "").replace("❌", "").strip()
                 d_low = (btn.callback_data or "").lower()
                 
+                # Проверяем вхождение ключевого слова как в текст кнопки, так и в её callback_data
                 if keyword.lower() in t_low or keyword.lower() in d_low:
                     if btn.callback_data:
-                        # Используем прямой вызов Telegram API для имитации реального клика
                         await client.invoke(
                             raw.functions.messages.GetBotCallbackAnswer(
                                 peer=peer,
@@ -69,7 +69,7 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- ПОЛНОСТЬЮ ПЕРЕРАБОТАННЫЙ АВТОСБОР ---
+# --- АВТОСБОР ---
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Начало автосбора.", flush=True)
     empty_rarities = set()  
@@ -77,7 +77,7 @@ async def twink_collect_logic(client, acc_id):
 
     for tick in range(100):
         try:
-            await asyncio.sleep(1.5) # Немного увеличили задержку для стабильности базы данных Telegram
+            await asyncio.sleep(1.5) 
             
             msg = None
             async for m in client.get_chat_history(bot_chat, limit=5):
