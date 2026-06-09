@@ -8,7 +8,6 @@ from pyrogram import Client, handlers, filters
 from pyrogram import raw
 from pyrogram.errors import PeerIdInvalid, FloodWait
 
-# Настройки портов для Render
 PORT = int(os.environ.get("PORT", 10000))
 
 API_ID = int(os.environ["API_ID"])
@@ -65,21 +64,26 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- ПОЛНОСТЬЮ ОБНОВЛЕННЫЙ ИСПРАВЛЕННЫЙ АВТОСБОР ---
+# --- ИСПРАВЛЕННЫЙ АВТОСБОР С ФИЛЬТРАЦИЕЙ ИСТОРИИ ---
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Начало автосбора.", flush=True)
     empty_rarities = set()  
     current_mode = "working" 
 
-    for tick in range(80):
+    for tick in range(100):
         try:
-            await asyncio.sleep(1.2) 
+            await asyncio.sleep(1.3) 
             
+            # Умный поиск сообщения обмена в истории (игнорируем левый спам вроде тмайнинга)
             msg = None
-            async for m in client.get_chat_history(bot_chat, limit=1):
-                msg = m
-                break
-
+            async for m in client.get_chat_history(bot_chat, limit=5):
+                m_text = m.text.lower() if m.text else ""
+                # Если это сообщение относится к обмену, берем его
+                if m.reply_markup and any(x in m_text or has_button(m, x) for x in ["выберите", "обмен", "добавить", "категорию", "редкость", "готов"]):
+                    msg = m
+                    break
+            
+            # Если целевое сообщение обмена не найдено среди последних — ждем
             if not msg or not msg.reply_markup:
                 continue
 
@@ -99,24 +103,21 @@ async def twink_collect_logic(client, acc_id):
                 client.collecting = False 
                 return
 
-            # Собираем абсолютно все кнопки без исключений для прямого анализа
             all_buttons = []
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
                     if btn.callback_data:
                         all_buttons.append(btn)
 
-            # Точечно фильтруем только кнопки действий (для экранов моделей и редкостей)
             action_buttons = []
             for b in all_buttons:
                 b_text = b.text.lower()
-                # Кнопка считается навигационной только если в ней НЕТ слов рабочий/сломанный
                 if any(x in b_text for x in ["назад", "back", "меню", "отмена", "готов", "вернуться"]):
                     if not any(cat in b_text for cat in ["рабоч", "сломан"]):
                         continue
                 action_buttons.append(b)
 
-            # ЭКРАН: ВЫБОР КАТЕГОРИИ (РАБОЧИЙ / СЛОМАННЫЙ) - Фикс зависания тут
+            # ЭКРАН: ВЫБОР КАТЕГОРИИ (РАБОЧИЙ / СЛОМАННЫЙ)
             if "выберите категорию" in text:
                 work_btn = next((b for b in all_buttons if "рабоч" in b.text.lower()), None)
                 broken_btn = next((b for b in all_buttons if "сломан" in b.text.lower()), None)
@@ -133,7 +134,6 @@ async def twink_collect_logic(client, acc_id):
                     print(f"🛠 [Твинк {acc_id}] Нажимаю на категорию: {target_btn.text}", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=2)
                 else:
-                    print(f"⚠️ [Твинк {acc_id}] Кнопки категорий не найдены, жму первую инлайн-кнопку", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, all_buttons[0].callback_data, timeout=2)
                 continue
 
@@ -348,15 +348,19 @@ async def handle_my_messages(client, message):
 
 async def card_timer_loop(client, acc_id):
     await asyncio.sleep(5)
-    try: await client.send_message(bot_chat, "ткарточка")
-    except: pass
     while True:
+        # Полная блокировка отправки команд, если сейчас идет сбор обмена
+        if getattr(client, "collecting", False):
+            await asyncio.sleep(5)
+            continue
+        try: 
+            await client.send_message(bot_chat, "ткарточка")
+        except: pass
+        
         try:
             if client.card_timer_override is not None and client.card_timer_override > 0:
                 await asyncio.sleep(client.card_timer_override)
                 client.card_timer_override = None
-                try: await client.send_message(bot_chat, "ткарточка")
-                except: pass
                 continue
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
@@ -369,10 +373,12 @@ async def card_timer_loop(client, acc_id):
 async def bg_tasks(client, acc_id):
     client.loop.create_task(card_timer_loop(client, acc_id))
     await asyncio.sleep(8)
-    try: await client.send_message(bot_chat, "тмайнинг")
-    except: pass
+    
+    if not getattr(client, "collecting", False):
+        try: await client.send_message(bot_chat, "тмайнинг")
+        except: pass
 
-    if acc_id in [1, 2]:
+    if acc_id in [1, 2] and not getattr(client, "collecting", False):
         try: await client.send_message(iris_bot_chat, "фарма")
         except: pass
 
@@ -384,6 +390,11 @@ async def bg_tasks(client, acc_id):
 
     while True:
         try:
+            # Если идет сбор трейда, засыпаем и ничего не отправляем в чаты
+            if getattr(client, "collecting", False):
+                await asyncio.sleep(10)
+                continue
+
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
@@ -414,10 +425,12 @@ async def bg_tasks(client, acc_id):
 
 async def farm_trigger_loop(client):
     while True:
+        await asyncio.sleep(3900)
+        if getattr(client, "collecting", False):
+            continue
         try:
             await client.send_message(bot_chat, "тмайнинг")
         except: pass
-        await asyncio.sleep(3900)
 
 async def start_pyrogram_clients(loop):
     global clients
@@ -441,6 +454,7 @@ async def start_pyrogram_clients(loop):
             me = await c.get_me()
             c.me_id = me.id
             c.card_timer_override = None
+            c.collecting = False
             
             acc_id = i + 1
             if acc_id == 2:
