@@ -3,17 +3,18 @@ import os
 import re
 import asyncio
 import datetime
-import threading
 from flask import Flask
 from pyrogram import Client, handlers, filters
 from pyrogram import raw
 
+# Создаем приложение Flask
 app = Flask(__name__)
 
 @app.route('/')
 def health():
     return "Ready and Running", 200
 
+# Инициализация конфигурации
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
@@ -68,13 +69,11 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- ИСПРАВЛЕННЫЙ АВТОСБОР ПО КАТЕГОРИЯМ ---
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Старт зачистки категорий.", flush=True)
-    
     empty_rarities = set()  
     last_clicked_rarity = None    
-    current_mode = "working" # Сначала собираем "рабочий", затем "сломанный"
+    current_mode = "working"
 
     for tick in range(150):
         try:
@@ -110,7 +109,6 @@ async def twink_collect_logic(client, acc_id):
 
             action_buttons = [b for b in all_buttons if not any(x in b.text.lower() or x in b.callback_data.lower() for x in ["назад", "back", "меню", "отмена", "готов", "вернуться"])]
 
-            # КАТЕГОРИЯ 1: ВЫБОР МОДЕЛЕЙ (ЭКРАН С ТЕЛЕФОНАМИ)
             if "выберите телефон" in text or has_button(msg, "добавить выбранное"):
                 if "нет доступных" in text or "отсутствуют" in text or not action_buttons:
                     print(f"📭 [Твинк {acc_id}] Модели закончились. Шаг назад.", flush=True)
@@ -127,7 +125,6 @@ async def twink_collect_logic(client, acc_id):
                         await asyncio.sleep(0.8)
                         continue
 
-                    # Фильтруем кнопки: убираем системные и те, где стоит маркер выбранного [✅]
                     phone_buttons = [b for b in action_buttons if "быстрый выбор" not in b.text.lower() and "добавить" not in b.text.lower()]
                     current_selected = sum(1 for b in phone_buttons if "[✅]" in b.text or "✅" in b.text)
                     available_phones = [b for b in phone_buttons if "[❌]" in b.text or "❌" in b.text or ("[✅]" not in b.text and "✅" not in b.text)]
@@ -146,7 +143,6 @@ async def twink_collect_logic(client, acc_id):
                             await asyncio.sleep(1.5)
                             continue
                 else:
-                    # Поштучный сбор (для сломанных, если нет быстрого выбора)
                     if action_buttons and not slots_full:
                         target_phone = action_buttons[0]
                         await client.request_callback_answer(msg.chat.id, msg.id, target_phone.callback_data, timeout=2)
@@ -159,7 +155,6 @@ async def twink_collect_logic(client, acc_id):
                         await asyncio.sleep(1.2)
                         continue
 
-            # КАТЕГОРИЯ 2: ВЫБОР РЕДКОСТЕЙ
             elif "выберите редкость" in text:
                 rarity_buttons = [b for b in action_buttons if any(x in b.text.lower() for x in ["обычн", "редк", "мистич", "легенд", "аркан", "платин", "артеф", "ширпотреб", "хроматич"])]
                 available_rarities = [b for b in rarity_buttons if b.text.lower().replace("✅","").replace("❌","").strip() not in empty_rarities]
@@ -179,7 +174,6 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(1.2)
                 continue
 
-            # КАТЕГОРИЯ 3: ГЛАВНЫЙ ЭКРАН ВЫБОРА КАТЕГОРИИ (РАБОЧИЙ / СЛОМАННЫЙ)
             elif "выберите категорию" in text:
                 work_btn = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
                 broken_btn = next((b for b in action_buttons if "сломан" in b.text.lower()), None)
@@ -196,7 +190,6 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(1.5)
                 continue
 
-            # КАТЕГОРИЯ 4: КОРНЕВОЙ ЭКРАН ОБМЕНА
             else:
                 add_btn = next((b for b in all_buttons if "добавить телефон" in b.text.lower() or "add_phone" in b.callback_data.lower()), None)
                 if add_btn:
@@ -246,7 +239,6 @@ async def process_bot_logic(client, message, acc_id):
     if not message: return
     if not hasattr(client, "collecting"): client.collecting = False
 
-    # АВТОСБОР ПРИ ОТКРЫТИИ МЕНЮ ФЕРМЫ
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
@@ -376,7 +368,6 @@ async def bg_tasks(client, acc_id):
         try: await client.send_message(iris_bot_chat, "фарма")
         except: pass
 
-    # ТРИГГЕР ЛУП ТЕПЕРЬ ОПРАШИВАЕТ ИМЕННО КОМАНДУ ТМАЙНИНГ ДЛЯ ВЫЗОВА ФЕРМЫ
     asyncio.create_task(farm_trigger_loop(client))
 
     claimed_today = False
@@ -416,8 +407,6 @@ async def bg_tasks(client, acc_id):
 async def farm_trigger_loop(client):
     while True:
         try:
-            # Раз в 65 минут отправляем команду «тмайнинг» (как на скриншоте 1873.jpg), 
-            # чтобы отобразить меню с кнопкой «Снять деньги с фермы»
             await client.send_message(bot_chat, "тмайнинг")
         except: pass
         await asyncio.sleep(3900)
@@ -428,9 +417,10 @@ def get_msg_handler(acc_id):
 def get_edit_handler(acc_id):
     return lambda c, m: asyncio.create_task(process_bot_logic(c, m, acc_id))
 
+# --- ИСПРАВЛЕННЫЙ ЕДИНЫЙ АСИНХРОННЫЙ СТАРТ ---
 async def start_pyrogram_clients():
     global clients
-    print("🛠 Запуск клиентов Pyrogram...", flush=True)
+    print("🛠 Инициализация клиентов Pyrogram...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -445,13 +435,10 @@ async def start_pyrogram_clients():
 
         try:
             await c.start()
-            await c.invoke(raw.functions.updates.GetState())
             clients.append(c)
             me = await c.get_me()
             c.me_id = me.id
             c.card_timer_override = None
-
-            async for _ in c.get_dialogs(limit=5): pass
             
             acc_id = i + 1
             if acc_id == 2:
@@ -466,7 +453,29 @@ async def start_pyrogram_clients():
             asyncio.create_task(bg_tasks(c, acc_id))
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
-    print("🚀 Все юзерботы успешно запущены!", flush=True)
+    print("🚀 Все активные аккаунты успешно подключены к Telegram!", flush=True)
 
-def run_async_loop():
-    loop = asyncio.new_event_
+async def run_flask_app():
+    """Запускает Flask встроенным асинхронным методом, чтобы не блокировать event loop"""
+    import werkzeug.serving
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Запуск веб-сервера на порту {port}...", flush=True)
+    
+    # Создаем асинхронную обертку над стандартным сервером Flask
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None, 
+        lambda: werkzeug.serving.run_simple('0.0.0.0', port, app, use_debugger=False, use_reloader=False)
+    )
+
+async def main():
+    # Запускаем Pyrogram-клиентов и Flask параллельно в одном общем Event Loop
+    await asyncio.gather(
+        start_pyrogram_clients(),
+        run_flask_app()
+    )
+
+if __name__ == "__main__":
+    # Корневой запуск без использования тредов
+    asyncio.run(main())
+                
