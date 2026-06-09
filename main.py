@@ -65,7 +65,7 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- УМНЫЙ АВТОСБОР БЕЗ ОШИБОК LOOP ---
+# --- ПОЛНОСТЬЮ ОБНОВЛЕННЫЙ ИСПРАВЛЕННЫЙ АВТОСБОР ---
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Начало автосбора.", flush=True)
     empty_rarities = set()  
@@ -99,16 +99,46 @@ async def twink_collect_logic(client, acc_id):
                 client.collecting = False 
                 return
 
+            # Собираем абсолютно все кнопки без исключений для прямого анализа
             all_buttons = []
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
                     if btn.callback_data:
                         all_buttons.append(btn)
 
-            action_buttons = [b for b in all_buttons if not any(x in b.text.lower() or x in b.callback_data.lower() for x in ["назад", "back", "меню", "отмена", "готов", "вернуться"])]
+            # Точечно фильтруем только кнопки действий (для экранов моделей и редкостей)
+            action_buttons = []
+            for b in all_buttons:
+                b_text = b.text.lower()
+                # Кнопка считается навигационной только если в ней НЕТ слов рабочий/сломанный
+                if any(x in b_text for x in ["назад", "back", "меню", "отмена", "готов", "вернуться"]):
+                    if not any(cat in b_text for cat in ["рабоч", "сломан"]):
+                        continue
+                action_buttons.append(b)
 
-            # 1. ТЕЛЕФОНЫ
-            if "выберите телефон" in text or has_button(msg, "добавить выбранное"):
+            # ЭКРАН: ВЫБОР КАТЕГОРИИ (РАБОЧИЙ / СЛОМАННЫЙ) - Фикс зависания тут
+            if "выберите категорию" in text:
+                work_btn = next((b for b in all_buttons if "рабоч" in b.text.lower()), None)
+                broken_btn = next((b for b in all_buttons if "сломан" in b.text.lower()), None)
+
+                target_btn = None
+                if current_mode == "broken" and broken_btn:
+                    target_btn = broken_btn
+                elif work_btn:
+                    target_btn = work_btn
+                else:
+                    target_btn = broken_btn or work_btn
+
+                if target_btn:
+                    print(f"🛠 [Твинк {acc_id}] Нажимаю на категорию: {target_btn.text}", flush=True)
+                    await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=2)
+                else:
+                    print(f"⚠️ [Твинк {acc_id}] Кнопки категорий не найдены, жму первую инлайн-кнопку", flush=True)
+                    await client.request_callback_answer(msg.chat.id, msg.id, all_buttons[0].callback_data, timeout=2)
+                continue
+
+            # ЭКРАН: ВЫБОР КОНКРЕТНЫХ МОДЕЛЕЙ ТЕЛЕФОНОВ
+            elif "выберите телефон" in text or has_button(msg, "добавить выбранное"):
                 if "нет доступных" in text or "отсутствуют" in text or not action_buttons:
                     print(f"📭 [Твинк {acc_id}] В этой редкости пусто. Выходим.", flush=True)
                     await click(client, msg, "назад")
@@ -145,7 +175,7 @@ async def twink_collect_logic(client, acc_id):
                         await asyncio.sleep(1.0)
                         continue
 
-            # 2. РЕДКОСТИ
+            # ЭКРАН: ВЫБОР РЕДКОСТЕЙ
             elif "выберите редкость" in text:
                 rarity_buttons = [b for b in action_buttons if any(x in b.text.lower() for x in ["обычн", "редк", "мистич", "легенд", "аркан", "платин", "артеф", "ширпотреб", "хроматич"])]
                 available_rarities = [b for b in rarity_buttons if b.text.lower().replace("✅","").replace("❌","").strip() not in empty_rarities]
@@ -164,22 +194,7 @@ async def twink_collect_logic(client, acc_id):
                 await client.request_callback_answer(msg.chat.id, msg.id, target_rarity.callback_data, timeout=2)
                 continue
 
-            # 3. КАТЕГОРИИ
-            elif "выберите категорию" in text:
-                work_btn = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
-                broken_btn = next((b for b in action_buttons if "сломан" in b.text.lower()), None)
-
-                if current_mode == "broken" and broken_btn:
-                    target_btn = broken_btn
-                elif work_btn:
-                    target_btn = work_btn
-                else:
-                    target_btn = broken_btn or work_btn
-
-                print(f"🛠 [Твинк {acc_id}] Перехожу в категорию: {target_btn.text}", flush=True)
-                await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=2)
-                continue
-
+            # КОРНЕВОЙ ЭКРАН
             else:
                 add_btn = next((b for b in all_buttons if "добавить телефон" in b.text.lower() or "add_phone" in b.callback_data.lower()), None)
                 if add_btn:
@@ -204,7 +219,7 @@ async def basis_sync_loop(basis_client):
             twink_finished_event.clear()
             await asyncio.sleep(1)
             continue
-        print("🔗 [СИНХРОНИЗАЦИЯ] Основа подтверждает трейд...", flush=True)
+        print("🔗 [СИНХРОНИЗАЦИЯ] Твинк закончил. Основа подтверждает трейд...", flush=True)
         for _ in range(5):
             try:
                 msg = None
@@ -237,7 +252,7 @@ async def process_bot_logic(client, message, acc_id):
                     btn_text = btn.text.lower()
                     if "снять деньги" in btn_text or "собрать деньги" in btn_text or "farm_claim" in btn.callback_data.lower():
                         try:
-                            print(f"💰 [Аккаунт {acc_id}] Снимаю деньги с фермы!", flush=True)
+                            print(f"💰 [Аккаунт {acc_id}] Нажимаю кнопку снятия денег с фермы!", flush=True)
                             await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
                         except: pass
 
@@ -279,7 +294,7 @@ async def process_bot_logic(client, message, acc_id):
                 if "ваше предложение обмена отправлено" in text: return
                 if await click(client, message, "trade_accept") or await click(client, message, "принять"):
                     if client.collecting: return
-                    print(f"✅ [Твинк {acc_id}] Запуск автоматического сбора через loop...", flush=True)
+                    print(f"✅ [Твинк {acc_id}] Обмен принят. Запуск автоматического сбора...", flush=True)
                     twink_finished_event.clear() 
                     client.collecting = True
                     client.loop.create_task(twink_collect_logic(client, acc_id))
@@ -404,10 +419,6 @@ async def farm_trigger_loop(client):
         except: pass
         await asyncio.sleep(3900)
 
-# --- БЕЗОПАСНЫЕ СВЯЗКИ ХЭНДЛЕРОВ ---
-async def safe_msg_handler(client, message, acc_id):
-    client.loop.create_task(process_bot_logic(client, message, acc_id))
-
 async def start_pyrogram_clients(loop):
     global clients
     print("🛠 Инициализация клиентов Pyrogram...", flush=True)
@@ -421,9 +432,7 @@ async def start_pyrogram_clients(loop):
             session_string=session.strip(),
             in_memory=True,
         )
-        # Передаем единый рабочий event loop в клиент
         c.loop = loop
-        
         c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
 
         try:
@@ -440,7 +449,6 @@ async def start_pyrogram_clients(loop):
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            # Безопасное назначение хэндлеров через лямбду, вызывающую таску в нужном loop
             c.add_handler(handlers.MessageHandler(
                 lambda client, message, a_id=acc_id: client.loop.create_task(process_bot_logic(client, message, a_id)), 
                 filters.chat(bot_chat)
@@ -458,7 +466,6 @@ async def start_pyrogram_clients(loop):
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
     print("🚀 Все активные аккаунты успешно подключены к Telegram!", flush=True)
 
-# --- ИСПРАВЛЕННЫЙ ВЕБ-СЕРВЕР AIOHTTP ---
 async def handle_http(request):
     return web.Response(text="Ready and Running", status=200)
 
@@ -473,10 +480,8 @@ async def run_web_server():
 
 async def main():
     loop = asyncio.get_running_loop()
-    # Запускаем веб-сервер и телеграм в рамках одной асинхронной среды
     await run_web_server()
     await start_pyrogram_clients(loop)
-    # Держим event loop вечно живым
     while True:
         await asyncio.sleep(3600)
 
