@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+import os
+import re
+import asyncio
+import datetime
 import threading
 from flask import Flask
 from pyrogram import Client, handlers, filters
@@ -22,7 +27,7 @@ threading.Thread(
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
-# Стандартные 5 сессий (в SESSION_5 просто вставь строку новой сессии)
+# Стандартные 5 сессий
 SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
@@ -30,7 +35,7 @@ iris_bot_chat = "iris_moon_bot"
 
 clients = []
 
-# Обновленные макросы (5-й аккаунт: @kuznecovvb | ID: 8357881344)
+# Обновленные макросы
 ACC_MACROS = {
     "1": "boymorale",
     "2": "tintedwindow",
@@ -104,7 +109,6 @@ async def twink_collect_logic(client, acc_id):
 
             text = msg.text.lower() if msg.text else ""
 
-            # --- БЛОК 1: ПРОВЕРКА ЛИМИТОВ СЛОТОВ ---
             if client.trade_counter >= client.dynamic_limit or "занято слотов" in text:
                 if has_button(msg, "готов"):
                     print(f"⚡ [Твинк {acc_id}] Трейд успешно заполнен ({client.trade_counter}). Нажимаю Готов!", flush=True)
@@ -123,7 +127,6 @@ async def twink_collect_logic(client, acc_id):
                     await asyncio.sleep(1.0)
                 continue
 
-            # Собираем инлайн-кнопки
             all_buttons = []
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
@@ -132,16 +135,12 @@ async def twink_collect_logic(client, acc_id):
 
             action_buttons = [b for b in all_buttons if not any(x in b.text.lower() or x in b.callback_data.lower() for x in ["назад", "back", "меню", "отмена", "готов"])]
 
-            # --- ДЕТЕКТОР ОТКАТА ИЗ-ЗА ПУСТОТЫ ---
             work_btn_check = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
             if last_menu_state == "rarity" and work_btn_check and last_clicked_rarity:
                 print(f"🚫 [Твинк {acc_id}] Бот отбросил нас назад! Редкость '{last_clicked_rarity}' пуста. В ЧС её.", flush=True)
                 empty_rarities.add(last_clicked_rarity)
                 last_clicked_rarity = None
 
-            # --- БЛОК 2: АВТОКЛИК ПО КНОПКАМ ---
-            
-            # Шаг А: Видим кнопку добавления "1 шт"
             single_btn = next((b for b in action_buttons if "1 шт" in b.text.lower() or "single" in b.callback_data.lower()), None)
             if single_btn:
                 client.trade_counter += 1
@@ -151,7 +150,6 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(1.5)
                 continue
 
-            # Шаг Б: Список моделей телефонов
             has_categories = any(any(x in b.text.lower() for x in ["рабоч", "сломан", "обычн", "редк", "мистич", "легенд"]) for b in action_buttons)
             if action_buttons and not has_categories:
                 target_model = action_buttons[0]
@@ -161,7 +159,6 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(1.5)
                 continue
 
-            # Шаг В: Меню выбора РЕДКОСТЕЙ
             rarity_buttons = [b for b in action_buttons if any(x in b.text.lower() for x in ["обычн", "редк", "мистич", "легенд"])]
             if rarity_buttons:
                 available_rarities = [b for b in rarity_buttons if b.text.lower() not in empty_rarities]
@@ -183,7 +180,6 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(1.5)
                 continue
 
-            # Шаг Г: Меню выбора СОСТОЯНИЯ (Рабочий / Сломанный)
             work_btn = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
             broken_btn = next((b for b in action_buttons if "сломан" in b.text.lower()), None)
 
@@ -210,7 +206,6 @@ async def twink_collect_logic(client, acc_id):
                 await asyncio.sleep(1.5)
                 continue
 
-            # Шаг Д: Меню самого трейда (старт)
             add_btn = next((b for b in all_buttons if "добавить телефон" in b.text.lower() or "add_phone" in b.callback_data.lower()), None)
             if add_btn:
                 last_menu_state = "trade_main"
@@ -264,14 +259,16 @@ async def process_bot_logic(client, message, acc_id):
     if not message: return
     if not hasattr(client, "collecting"): client.collecting = False
 
+    # Сбор денег с фермы И забирание ежедневной награды кнопкой "Забрать✅"
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
-                if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅"]) or "farm_claim" in btn.callback_data.lower():
+                # Добавлен клик по кнопке "забрать✅" / "забрать" для ежедневных наград из файла 2937.jpg
+                if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги с фермы"]) or "farm_claim" in btn.callback_data.lower():
                     try:
+                        print(f"💰 [Аккаунт {acc_id}] Нажимаю кнопку действия ({btn.text})...", flush=True)
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
-                        return
                     except: pass
 
     if not message.text: return
@@ -350,7 +347,6 @@ async def handle_my_messages(client, message):
             await asyncio.sleep(3)
             await message.delete()
         except: pass
-        print(f"⚙️ Глобальный статус автотрейда изменен: {AUTO_TRADE_ENABLED}", flush=True)
         return
 
     if cmd in [".trade", ".t", ".т"]:
@@ -414,8 +410,10 @@ async def bg_tasks(client, acc_id):
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
+            # Отправка точного текста "ежедневная награда" без слэша (как на скрине 2937.jpg)
             if msk_now.hour == 1 and msk_now.minute == 0:
                 if not reward_claimed_today:
+                    print(f"🎁 [Аккаунт {acc_id}] Запрашиваю ежедневную награду текстом...", flush=True)
                     await client.send_message(bot_chat, "ежедневная награда")
                     reward_claimed_today = True
             else:
@@ -442,7 +440,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Перезапуск фермы. В SESSION_5 теперь ожидается новый рабочий аккаунт.", flush=True)
+    print("🛠 Запуск распределенной фермы юзерботов...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -474,12 +472,12 @@ async def start_bot():
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
             c.add_handler(handlers.MessageHandler(
-                lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
+                lambda client, message, a_id=acc_id: client.loop.create_task(process_bot_logic(client, message, a_id)),
                 filters.chat(bot_chat)
             ), group=0)
 
             c.add_handler(handlers.EditedMessageHandler(
-                lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
+                lambda client, message, a_id=acc_id: client.loop.create_task(process_bot_logic(client, message, a_id)),
                 filters.chat(bot_chat)
             ), group=0)
             
@@ -487,9 +485,10 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт готов к работе. Переключатель .at активен.", flush=True)
+    print("🚀 Все аккаунты успешно инициализированы!", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(start_bot())
+            
