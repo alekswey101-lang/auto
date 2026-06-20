@@ -254,9 +254,12 @@ async def basis_sync_loop(basis_client):
             
         twink_finished_event.clear()
 
-# --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
-async def process_bot_logic(client, message, acc_id):
+# --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА (БЕЗ LAMBDA СБОЕВ) ---
+async def process_bot_logic(client, message):
     if not message: return
+    
+    # Достаем ID аккаунта прямо из свойств текущего вызванного клиента
+    acc_id = getattr(client, "acc_id", 0)
     if not hasattr(client, "collecting"): client.collecting = False
 
     # Сбор денег с фермы И забирание ежедневной награды кнопкой "Забрать✅"
@@ -264,7 +267,6 @@ async def process_bot_logic(client, message, acc_id):
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
-                # Добавлен клик по кнопке "забрать✅" / "забрать" для ежедневных наград из файла 2937.jpg
                 if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги с фермы"]) or "farm_claim" in btn.callback_data.lower():
                     try:
                         print(f"💰 [Аккаунт {acc_id}] Нажимаю кнопку действия ({btn.text})...", flush=True)
@@ -410,7 +412,6 @@ async def bg_tasks(client, acc_id):
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
-            # Отправка точного текста "ежедневная награда" без слэша (как на скрине 2937.jpg)
             if msk_now.hour == 1 and msk_now.minute == 0:
                 if not reward_claimed_today:
                     print(f"🎁 [Аккаунт {acc_id}] Запрашиваю ежедневную награду текстом...", flush=True)
@@ -444,8 +445,10 @@ async def start_bot():
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
+        
+        acc_id = i + 1
         c = Client(
-            name=f"session_active_{i+1}",
+            name=f"session_active_{acc_id}",
             api_id=API_ID,
             api_hash=API_HASH,
             session_string=session.strip(),
@@ -459,31 +462,27 @@ async def start_bot():
             await c.invoke(raw.functions.updates.GetState())
             clients.append(c)
             me = await c.get_me()
+            
+            # Привязываем ID аккаунта прямо к объекту клиента, чтобы избежать путаницы
+            c.acc_id = acc_id
             c.me_id = me.id
             c.card_timer_override = None
 
             async for _ in c.get_dialogs(limit=5): pass
             
-            acc_id = i + 1
             if acc_id == 2:
                 print(f"👑 ГЛАВНАЯ ОСНОВА (Аккаунт 2) запущена: @{me.username}", flush=True)
                 asyncio.create_task(basis_sync_loop(c))
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            c.add_handler(handlers.MessageHandler(
-                lambda client, message, a_id=acc_id: client.loop.create_task(process_bot_logic(client, message, a_id)),
-                filters.chat(bot_chat)
-            ), group=0)
-
-            c.add_handler(handlers.EditedMessageHandler(
-                lambda client, message, a_id=acc_id: client.loop.create_task(process_bot_logic(client, message, a_id)),
-                filters.chat(bot_chat)
-            ), group=0)
+            # ПРЯМАЯ РЕГИСТРАЦИЯ ХЕНДЛЕРОВ (БЕЗ СБОЙНЫХ LAMBDA)
+            c.add_handler(handlers.MessageHandler(process_bot_logic, filters.chat(bot_chat)), group=0)
+            c.add_handler(handlers.EditedMessageHandler(process_bot_logic, filters.chat(bot_chat)), group=0)
             
             asyncio.create_task(bg_tasks(c, acc_id))
         except Exception as e:
-            print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
+            print(f"⚠️ Ошибка запуска аккаунта {acc_id}: {e}", flush=True)
 
     print("🚀 Все аккаунты успешно инициализированы!", flush=True)
     while True: await asyncio.sleep(3600)
@@ -491,4 +490,4 @@ async def start_bot():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(start_bot())
-            
+        
