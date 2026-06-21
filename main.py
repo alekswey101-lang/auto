@@ -254,11 +254,11 @@ async def basis_sync_loop(basis_client):
             
         twink_finished_event.clear()
 
-# --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА (БЕЗ LAMBDA СБОЕВ) ---
+# --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
 async def process_bot_logic(client, message):
     if not message: return
     
-    # Достаем ID аккаунта прямо из свойств текущего вызванного клиента
+    # Извлекаем ID строго из самого вызванного клиента
     acc_id = getattr(client, "acc_id", 0)
     if not hasattr(client, "collecting"): client.collecting = False
 
@@ -267,11 +267,17 @@ async def process_bot_logic(client, message):
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
-                if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги с фермы"]) or "farm_claim" in btn.callback_data.lower():
+                
+                btn_text = btn.text.lower()
+                btn_data = btn.callback_data.lower()
+                
+                # Более гибкая проверка текста кнопок для фермы и наград
+                if any(x in btn_text for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги"]) or "farm_claim" in btn_data or "reward" in btn_data:
                     try:
-                        print(f"💰 [Аккаунт {acc_id}] Нажимаю кнопку действия ({btn.text})...", flush=True)
+                        print(f"💰 [Аккаунт {acc_id}] Вижу кнопку '{btn.text}', нажимаю...", flush=True)
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
-                    except: pass
+                    except Exception as click_err:
+                        print(f"⚠️ [Аккаунт {acc_id}] Ошибка клика по кнопке {btn.text}: {click_err}", flush=True)
 
     if not message.text: return
     text = message.text.lower()
@@ -369,7 +375,8 @@ async def handle_my_messages(client, message):
         await client.send_message(bot_chat, bot_cmd)
 
 # --- ИЗОЛИРОВАННЫЙ ТАЙМЕР КАРТОЧЕК ---
-async def card_timer_loop(client, acc_id):
+async def card_timer_loop(client):
+    acc_id = getattr(client, "acc_id", 0)
     await asyncio.sleep(5)
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
@@ -392,8 +399,9 @@ async def card_timer_loop(client, acc_id):
         await asyncio.sleep(30)
 
 # --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ ---
-async def bg_tasks(client, acc_id):
-    asyncio.create_task(card_timer_loop(client, acc_id))
+async def bg_tasks(client):
+    acc_id = getattr(client, "acc_id", 0)
+    asyncio.create_task(card_timer_loop(client))
 
     await asyncio.sleep(8)
     try: await client.send_message(bot_chat, "тмайнинг")
@@ -414,7 +422,7 @@ async def bg_tasks(client, acc_id):
 
             if msk_now.hour == 1 and msk_now.minute == 0:
                 if not reward_claimed_today:
-                    print(f"🎁 [Аккаунт {acc_id}] Запрашиваю ежедневную награду текстом...", flush=True)
+                    print(f"🎁 [Аккаунт {acc_id}] Отправляю текст 'ежедневная награда'...", flush=True)
                     await client.send_message(bot_chat, "ежедневная награда")
                     reward_claimed_today = True
             else:
@@ -463,7 +471,7 @@ async def start_bot():
             clients.append(c)
             me = await c.get_me()
             
-            # Привязываем ID аккаунта прямо к объекту клиента, чтобы избежать путаницы
+            # Строгая привязка свойств к конкретному объекту клиента
             c.acc_id = acc_id
             c.me_id = me.id
             c.card_timer_override = None
@@ -476,11 +484,12 @@ async def start_bot():
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            # ПРЯМАЯ РЕГИСТРАЦИЯ ХЕНДЛЕРОВ (БЕЗ СБОЙНЫХ LAMBDA)
+            # Чистая регистрация без конфликтов в замыканиях lambda
             c.add_handler(handlers.MessageHandler(process_bot_logic, filters.chat(bot_chat)), group=0)
             c.add_handler(handlers.EditedMessageHandler(process_bot_logic, filters.chat(bot_chat)), group=0)
             
-            asyncio.create_task(bg_tasks(c, acc_id))
+            # Передаем сам клиент, а не внешнюю i из цикла
+            asyncio.create_task(bg_tasks(c))
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {acc_id}: {e}", flush=True)
 
@@ -490,4 +499,3 @@ async def start_bot():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(start_bot())
-        
