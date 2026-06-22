@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
-import os
-import re
-import asyncio
-import datetime
 import threading
+import os
+import asyncio
+import re
+import datetime
 from flask import Flask
 from pyrogram import Client, handlers, filters
 from pyrogram import raw
@@ -15,18 +14,19 @@ app = Flask(__name__)
 def health():
     return "Ready and Running", 200
 
-threading.Thread(
-    target=lambda: app.run(
+def run_flask():
+    app.run(
         host='0.0.0.0',
         port=int(os.environ.get("PORT", 10000))
-    ),
-    daemon=True
-).start()
+    )
+
+threading.Thread(target=run_flask, daemon=True).start()
 
 # --- CONFIG ---
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
+# Стандартные 5 сессий
 SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
@@ -34,6 +34,7 @@ iris_bot_chat = "iris_moon_bot"
 
 clients = []
 
+# Обновленные макросы (5-й аккаунт: @kuznecovvb | ID: 8357881344)
 ACC_MACROS = {
     "1": "boymorale",
     "2": "tintedwindow",
@@ -43,7 +44,7 @@ ACC_MACROS = {
 }
 
 twink_finished_event = asyncio.Event()
-AUTO_TRADE_ENABLED = True  
+AUTO_TRADE_ENABLED = True  # Изначально автотрейд включен
 
 # --- НАДЕЖНЫЙ КЛИКЕР ---
 async def click(client, message, keyword: str) -> bool:
@@ -82,18 +83,19 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- ТОЧНЫЙ ГАЛОЧНЫЙ АВТОСБОР ТВИНКА ---
+# --- ТЕХНИЧЕСКИЙ АВТОСБОР ТВИНКА ---
 async def twink_collect_logic(client, acc_id):
-    print(f"⚡ [Твинк {acc_id}] Фоновый быстрый автосбор НАЧАТ.", flush=True)
+    print(f"⚡ [Твинк {acc_id}] Фоновый автосбор НАЧАТ С НУЛЯ.", flush=True)
     
     client.trade_counter = 0
     client.dynamic_limit = 10 
+    
     working_phones_depleted = False 
     empty_rarities = set()        
     last_clicked_rarity = None    
     last_menu_state = None        
 
-    for tick in range(60):
+    for tick in range(80):
         try:
             msg = None
             async for m in client.get_chat_history(bot_chat, limit=1):
@@ -106,10 +108,10 @@ async def twink_collect_logic(client, acc_id):
 
             text = msg.text.lower() if msg.text else ""
 
-            # Если трейд заполнен или слоты заняты
-            if "занято слотов" in text or "готовность:" in text:
+            # --- БЛОК 1: ПРОВЕРКА ЛИМИТОВ СЛОТОВ ---
+            if client.trade_counter >= client.dynamic_limit or "занято слотов" in text:
                 if has_button(msg, "готов"):
-                    print(f"⚡ [Твинк {acc_id}] Нажимаю Готов!", flush=True)
+                    print(f"⚡ [Твинк {acc_id}] Трейд успешно заполнен ({client.trade_counter}). Нажимаю Готов!", flush=True)
                     await click(client, msg, "готов")
                     twink_finished_event.set()
                     client.collecting = False 
@@ -125,6 +127,7 @@ async def twink_collect_logic(client, acc_id):
                     await asyncio.sleep(1.0)
                 continue
 
+            # Собираем инлайн-кнопки
             all_buttons = []
             for row in msg.reply_markup.inline_keyboard:
                 for btn in row:
@@ -133,102 +136,114 @@ async def twink_collect_logic(client, acc_id):
 
             action_buttons = [b for b in all_buttons if not any(x in b.text.lower() or x in b.callback_data.lower() for x in ["назад", "back", "меню", "отмена", "готов"])]
 
-            # Проверка отката из-за пустой редкости
+            # --- ДЕТЕКТОР ОТКАТА ИЗ-ЗА ПУСТОТЫ ---
             work_btn_check = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
             if last_menu_state == "rarity" and work_btn_check and last_clicked_rarity:
-                print(f"🚫 [Твинк {acc_id}] Редкость '{last_clicked_rarity}' пуста. Вносим в ЧС.", flush=True)
+                print(f"🚫 [Твинк {acc_id}] Бот отбросил нас назад! Редкость '{last_clicked_rarity}' пуста. В ЧС её.", flush=True)
                 empty_rarities.add(last_clicked_rarity)
                 last_clicked_rarity = None
 
-            # Кнопки режима быстрого выбора
+            # --- БЛОК 2: АВТОКЛИК ПО КНОПКАМ (ГАЛОЧНЫЙ РЕЖИМ) ---
             fast_mode_off_btn = next((b for b in all_buttons if "быстрый выбор: выкл" in b.text.lower()), None)
             fast_mode_on_btn = next((b for b in all_buttons if "быстрый выбор: вкл" in b.text.lower()), None)
             add_selected_btn = next((b for b in all_buttons if "добавить выбранное" in b.text.lower() or "добавить выбранные" in b.text.lower()), None)
 
-            # 1. Включаем быстрый выбор, если выключен
+            # 1. Если режим быстрого выбора выключен — включаем
             if fast_mode_off_btn:
-                print(f"⚙️ [Твинк {acc_id}] Включаю режим快速 выбора...", flush=True)
+                print(f"⚙️ [Твинк {acc_id}] Включаю режим быстрого выбора...", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, fast_mode_off_btn.callback_data, timeout=2)
                 await asyncio.sleep(1.0)
                 continue
 
-            # Ищем маркеры крестика и галочки
-            not_selected_model = next((b for b in action_buttons if "❌" in b.text or "[x]" in b.text.lower()), None)
-            selected_model = next((b for b in action_buttons if "✅" in b.text or "[v]" in b.text.lower()), None)
+            not_selected_model = next((b for b in action_buttons if "❌" in b.text), None)
+            selected_model = next((b for b in action_buttons if "✅" in b.text), None)
 
-            # 2. Если есть невыбранная модель и галочка еще не стоит — кликаем 1 раз
+            # 2. Если мы внутри списка моделей и видим крестик — ставим галочку
             if not_selected_model and not selected_model:
-                print(f"💎 [Твинк {acc_id}] Нажимаю на модель [{not_selected_model.text}] для активации галочки ✅", flush=True)
+                print(f"💎 [Твинк {acc_id}] Ставлю галочку на модель [{not_selected_model.text}]", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, not_selected_model.callback_data, timeout=2)
                 last_menu_state = "model_select_fast"
+                client.trade_counter += 1
                 await asyncio.sleep(1.0)
                 continue
 
-            # 3. Если галочка поставлена, подтверждаем
+            # 3. Если галочка стоит — подтверждаем добавление
             if add_selected_btn or selected_model:
                 if add_selected_btn:
-                    print(f"🚀 [Твинк {acc_id}] Подтверждаю выбор кнопкой '{add_selected_btn.text}'!", flush=True)
+                    print(f"🚀 [Твинк {acc_id}] Нажимаю '{add_selected_btn.text}'", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, add_selected_btn.callback_data, timeout=2)
                 else:
-                    print(f"🚀 [Твинк {acc_id}] Прожимаю добавление выбранного текста...", flush=True)
                     await click(client, msg, "добавить выбранное")
-                
                 await asyncio.sleep(1.5)
                 continue
 
-            # --- СТАНДАРТНАЯ НАВИГАЦИЯ ДО СПИСКА МОДЕЛЕЙ ---
-            has_categories = any(any(x in b.text.lower() for x in ["рабоч", "сломан", "обычн", "редк", "мистич", "легенд"]) for b in action_buttons)
-            if action_buttons and not has_categories and not (fast_mode_off_btn or fast_mode_on_btn):
-                target_model = action_buttons[0]
-                last_menu_state = "model_list"
-                await client.request_callback_answer(msg.chat.id, msg.id, target_model.callback_data, timeout=2)
-                await asyncio.sleep(1.2)
-                continue
-
-            # Выбор редкостей
+            # Шаг В: Меню выбора РЕДКОСТЕЙ
             rarity_buttons = [b for b in action_buttons if any(x in b.text.lower() for x in ["обычн", "редк", "мистич", "легенд"])]
             if rarity_buttons:
                 available_rarities = [b for b in rarity_buttons if b.text.lower() not in empty_rarities]
+                
                 if not available_rarities:
+                    print(f"⚠️ [Твинк {acc_id}] В этой категории все редкости пусты. Иду назад.", flush=True)
                     await click(client, msg, "назад")
                     working_phones_depleted = True
                     last_menu_state = "rarity_empty"
-                    await asyncio.sleep(1.2)
+                    await asyncio.sleep(1.5)
                     continue
 
                 target_rarity = next((b for b in available_rarities if any(x in b.text.lower() for x in ["мистич", "редк", "легенд"])), available_rarities[0])
                 last_clicked_rarity = target_rarity.text.lower()
                 last_menu_state = "rarity"
+                
+                print(f"🔮 [Твинк {acc_id}] Выбираю редкость: [{target_rarity.text}]", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, target_rarity.callback_data, timeout=2)
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(1.5)
                 continue
 
-            # Выбор состояния
+            # Шаг Г: Меню выбора СОСТОЯНИЯ (Рабочий / Сломанный) с защитой от зацикливания
             work_btn = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
             broken_btn = next((b for b in action_buttons if "сломан" in b.text.lower()), None)
+
             if work_btn or broken_btn:
                 if working_phones_depleted and broken_btn:
                     target_btn = broken_btn
                     client.dynamic_limit = 5
-                elif work_btn:
+                elif work_btn and not working_phones_depleted:
                     target_btn = work_btn
                     client.dynamic_limit = 10
                 else:
                     target_btn = broken_btn or work_btn
 
+                # Защита: если кликаем в одно состояние больше 3 раз, значит меню зависло
+                if not hasattr(client, "state_click_counter"):
+                    client.state_click_counter = 0
+                
+                if last_menu_state == "state":
+                    client.state_click_counter += 1
+                    if client.state_click_counter >= 3 and target_btn == work_btn:
+                        print(f"🔄 [Твинк {acc_id}] Похоже на баг меню. Переключаюсь на сломанные для выхода из цикла...", flush=True)
+                        working_phones_depleted = True
+                        client.state_click_counter = 0
+                        if broken_btn: target_btn = broken_btn
+                else:
+                    client.state_click_counter = 0
+
                 last_menu_state = "state"
+                print(f"📱 [Твинк {acc_id}] Клик по состоянию: '{target_btn.text}'", flush=True)
                 try:
                     await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=2)
-                except: pass
-                await asyncio.sleep(1.2)
+                except:
+                    pass
+
+                await asyncio.sleep(1.5)
                 continue
 
-            # Стартовая кнопка
+            # Шаг Д: Меню самого трейда (старт)
             add_btn = next((b for b in all_buttons if "добавить телефон" in b.text.lower() or "add_phone" in b.callback_data.lower()), None)
             if add_btn:
                 last_menu_state = "trade_main"
+                print(f"➕ [Твинк {acc_id}] Нажимаю 'Добавить телефон'", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, add_btn.callback_data, timeout=2)
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(1.2)
                 continue
 
         except Exception as e:
@@ -241,18 +256,21 @@ async def twink_collect_logic(client, acc_id):
 async def basis_sync_loop(basis_client):
     while True:
         await twink_finished_event.wait()
+        
         if not AUTO_TRADE_ENABLED:
             twink_finished_event.clear()
             await asyncio.sleep(1)
             continue
             
         print("🔗 [СИНХРОНИЗАЦИЯ] Твинк закончил сбор. Основа прожимает готовность...", flush=True)
+        
         for _ in range(5):
             try:
                 msg = None
                 async for m in basis_client.get_chat_history(bot_chat, limit=1):
                     msg = m
                     break
+                
                 if msg:
                     if has_button(msg, "готов"):
                         await click(basis_client, msg, "готов")
@@ -265,6 +283,7 @@ async def basis_sync_loop(basis_client):
                                     break
             except: pass
             await asyncio.sleep(0.5)
+            
         twink_finished_event.clear()
 
 # --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
@@ -276,13 +295,10 @@ async def process_bot_logic(client, message, acc_id):
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
-                b_text = btn.text.lower()
-                b_data = btn.callback_data.lower()
-                
-                if any(x in b_text for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги"]) or "farm_claim" in b_data or "reward" in b_data:
+                if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅"]) or "farm_claim" in btn.callback_data.lower():
                     try:
-                        print(f"💰 [Аккаунт {acc_id}] Нажимаю кнопку прибыли/награды: [{btn.text}]", flush=True)
-                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=3)
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
+                        return
                     except: pass
 
     if not message.text: return
@@ -327,7 +343,7 @@ async def process_bot_logic(client, message, acc_id):
             if "ваше предложение обмена отправлено" in text: return
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
                 if client.collecting: return
-                print(f"✅ [Твинк {acc_id}] Трейд принят. Включаю ГАЛОЧНЫЙ автосбор.", flush=True)
+                print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск автосбора.", flush=True)
                 twink_finished_event.clear() 
                 client.collecting = True
                 asyncio.create_task(twink_collect_logic(client, acc_id))
@@ -361,6 +377,7 @@ async def handle_my_messages(client, message):
             await asyncio.sleep(3)
             await message.delete()
         except: pass
+        print(f"⚙️ Глобальный статус автотрейда изменен: {AUTO_TRADE_ENABLED}", flush=True)
         return
 
     if cmd in [".trade", ".t", ".т"]:
@@ -452,14 +469,12 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Запуск распределенной фермы юзерботов...", flush=True)
+    print("🛠 Перезапуск фермы. Инициализация сессий...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
-        
-        acc_id = i + 1
         c = Client(
-            name=f"session_active_{acc_id}",
+            name=f"session_active_{i+1}",
             api_id=API_ID,
             api_hash=API_HASH,
             session_string=session.strip(),
@@ -473,37 +488,34 @@ async def start_bot():
             await c.invoke(raw.functions.updates.GetState())
             clients.append(c)
             me = await c.get_me()
-            
             c.me_id = me.id
             c.card_timer_override = None
 
             async for _ in c.get_dialogs(limit=5): pass
             
+            acc_id = i + 1
             if acc_id == 2:
                 print(f"👑 ГЛАВНАЯ ОСНОВА (Аккаунт 2) запущена: @{me.username}", flush=True)
                 asyncio.create_task(basis_sync_loop(c))
             else:
-                print(f"✅ ...Аккаунт {acc_id} запущен: @{me.username}", flush=True)
+                print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
+            # ИСПРАВЛЕНО: Теперь асинхронные обработчики вызываются корректно через loop.create_task
             c.add_handler(handlers.MessageHandler(
-                lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
-                    process_bot_logic(current_client, message, current_id)
-                ),
+                lambda client, message, a_id=acc_id: client.loop.create_task(process_bot_logic(client, message, a_id)),
                 filters.chat(bot_chat)
             ), group=0)
 
             c.add_handler(handlers.EditedMessageHandler(
-                lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
-                    process_bot_logic(current_client, message, current_id)
-                ),
+                lambda client, message, a_id=acc_id: client.loop.create_task(process_bot_logic(client, message, a_id)),
                 filters.chat(bot_chat)
             ), group=0)
             
             asyncio.create_task(bg_tasks(c, acc_id))
         except Exception as e:
-            print(f"⚠️ Ошибка запуска аккаунта {acc_id}: {e}", flush=True)
+            print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Все аккаунты переведены на идеальный ГАЛОЧНЫЙ автовыбор!", flush=True)
+    print("🚀 Скрипт готов к работе. Переключатель .at активен.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
