@@ -27,7 +27,6 @@ threading.Thread(
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
-# Стандартные 5 сессий
 SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
 
 bot_chat = "phonegetcardsbot"
@@ -35,7 +34,6 @@ iris_bot_chat = "iris_moon_bot"
 
 clients = []
 
-# Обновленные макросы
 ACC_MACROS = {
     "1": "boymorale",
     "2": "tintedwindow",
@@ -45,7 +43,7 @@ ACC_MACROS = {
 }
 
 twink_finished_event = asyncio.Event()
-AUTO_TRADE_ENABLED = True  # Изначально автотрейд включен
+AUTO_TRADE_ENABLED = True  
 
 # --- НАДЕЖНЫЙ КЛИКЕР ---
 async def click(client, message, keyword: str) -> bool:
@@ -224,21 +222,18 @@ async def twink_collect_logic(client, acc_id):
 async def basis_sync_loop(basis_client):
     while True:
         await twink_finished_event.wait()
-        
         if not AUTO_TRADE_ENABLED:
             twink_finished_event.clear()
             await asyncio.sleep(1)
             continue
             
         print("🔗 [СИНХРОНИЗАЦИЯ] Твинк закончил сбор. Основа прожимает готовность...", flush=True)
-        
         for _ in range(5):
             try:
                 msg = None
                 async for m in basis_client.get_chat_history(bot_chat, limit=1):
                     msg = m
                     break
-                
                 if msg:
                     if has_button(msg, "готов"):
                         await click(basis_client, msg, "готов")
@@ -251,33 +246,29 @@ async def basis_sync_loop(basis_client):
                                     break
             except: pass
             await asyncio.sleep(0.5)
-            
         twink_finished_event.clear()
 
 # --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
-async def process_bot_logic(client, message):
+async def process_bot_logic(client, message, acc_id):
     if not message: return
-    
-    # Извлекаем ID строго из самого вызванного клиента
-    acc_id = getattr(client, "acc_id", 0)
     if not hasattr(client, "collecting"): client.collecting = False
 
-    # Сбор денег с фермы И забирание ежедневной награды кнопкой "Забрать✅"
+    # --- ИСПРАВЛЕННЫЙ БЛОК СБОРА ПРИБЫЛИ И НАГРАД ---
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
+                b_text = btn.text.lower()
+                b_data = btn.callback_data.lower()
                 
-                btn_text = btn.text.lower()
-                btn_data = btn.callback_data.lower()
-                
-                # Более гибкая проверка текста кнопок для фермы и наград
-                if any(x in btn_text for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги"]) or "farm_claim" in btn_data or "reward" in btn_data:
+                # Добавлено "снять деньги" специально для кнопки под фермой! 
+                # Убран ломающий "return", чтобы проверялись все доступные инлайн кнопки
+                if any(x in b_text for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги"]) or "farm_claim" in b_data or "reward" in b_data:
                     try:
-                        print(f"💰 [Аккаунт {acc_id}] Вижу кнопку '{btn.text}', нажимаю...", flush=True)
-                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
-                    except Exception as click_err:
-                        print(f"⚠️ [Аккаунт {acc_id}] Ошибка клика по кнопке {btn.text}: {click_err}", flush=True)
+                        print(f"💰 [Аккаунт {acc_id}] Найдена кнопка сбора прибыли/награды [{btn.text}]. Нажимаю...", flush=True)
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=3)
+                    except Exception as err:
+                        print(f"⚠️ [Аккаунт {acc_id}] Ошибка автоклика по '{btn.text}': {err}", flush=True)
 
     if not message.text: return
     text = message.text.lower()
@@ -375,8 +366,7 @@ async def handle_my_messages(client, message):
         await client.send_message(bot_chat, bot_cmd)
 
 # --- ИЗОЛИРОВАННЫЙ ТАЙМЕР КАРТОЧЕК ---
-async def card_timer_loop(client):
-    acc_id = getattr(client, "acc_id", 0)
+async def card_timer_loop(client, acc_id):
     await asyncio.sleep(5)
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
@@ -399,9 +389,8 @@ async def card_timer_loop(client):
         await asyncio.sleep(30)
 
 # --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ ---
-async def bg_tasks(client):
-    acc_id = getattr(client, "acc_id", 0)
-    asyncio.create_task(card_timer_loop(client))
+async def bg_tasks(client, acc_id):
+    asyncio.create_task(card_timer_loop(client, acc_id))
 
     await asyncio.sleep(8)
     try: await client.send_message(bot_chat, "тмайнинг")
@@ -420,17 +409,20 @@ async def bg_tasks(client):
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
+            # Ровно в 01:00 МСК - Ежедневная награда
             if msk_now.hour == 1 and msk_now.minute == 0:
                 if not reward_claimed_today:
-                    print(f"🎁 [Аккаунт {acc_id}] Отправляю текст 'ежедневная награда'...", flush=True)
+                    print(f"🎁 [Аккаунт {acc_id}] Авто-отправка: 'ежедневная награда'", flush=True)
                     await client.send_message(bot_chat, "ежедневная награда")
                     reward_claimed_today = True
             else:
                 if msk_now.hour == 1 and msk_now.minute == 2:
                     reward_claimed_today = False
 
+            # Ровно в 00:10 МСК - Майнинг
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
+                    print(f"⛏ [Аккаунт {acc_id}] Авто-отправка: 'тмайнинг'", flush=True)
                     await client.send_message(bot_chat, "тмайнинг")
                     claimed_today = True
             else:
@@ -443,7 +435,9 @@ async def bg_tasks(client):
                     try: await client.send_message(iris_bot_chat, "фарма")
                     except: pass
                     iris_timer = 0
-        except: pass
+        except Exception as bg_err:
+            print(f"⚠️ [Аккаунт {acc_id}] Ошибка в цикле bg_tasks: {bg_err}", flush=True)
+            
         await asyncio.sleep(60)
 
 # --- СТАРТ ---
@@ -471,8 +465,6 @@ async def start_bot():
             clients.append(c)
             me = await c.get_me()
             
-            # Строгая привязка свойств к конкретному объекту клиента
-            c.acc_id = acc_id
             c.me_id = me.id
             c.card_timer_override = None
 
@@ -484,16 +476,26 @@ async def start_bot():
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            # Чистая регистрация без конфликтов в замыканиях lambda
-            c.add_handler(handlers.MessageHandler(process_bot_logic, filters.chat(bot_chat)), group=0)
-            c.add_handler(handlers.EditedMessageHandler(process_bot_logic, filters.chat(bot_chat)), group=0)
+            # НАДЕЖНАЯ АСИНХРОННАЯ РЕГИСТРАЦИЯ ХЕНДЛЕРОВ (Защита от зависания и пропуска кликов)
+            c.add_handler(handlers.MessageHandler(
+                lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
+                    process_bot_logic(current_client, message, current_id)
+                ),
+                filters.chat(bot_chat)
+            ), group=0)
+
+            c.add_handler(handlers.EditedMessageHandler(
+                lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
+                    process_bot_logic(current_client, message, current_id)
+                ),
+                filters.chat(bot_chat)
+            ), group=0)
             
-            # Передаем сам клиент, а не внешнюю i из цикла
-            asyncio.create_task(bg_tasks(c))
+            asyncio.create_task(bg_tasks(c, acc_id))
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {acc_id}: {e}", flush=True)
 
-    print("🚀 Все аккаунты успешно инициализированы!", flush=True)
+    print("🚀 Все аккаунты успешно инициализированы и готовы к автоматическому сбору прибыли!", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
