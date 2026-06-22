@@ -81,14 +81,13 @@ def has_button(message, keyword: str) -> bool:
                 return True
     return False
 
-# --- ИСПРАВЛЕННЫЙ АВТОСБОР ТВИНКА ---
+# --- ИСПРАВЛЕННЫЙ АВТОСБОР ТВИНКА (БЕЗ ОТКАТОВ НАЗАД) ---
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Фоновый автосбор НАЧАТ.", flush=True)
     
     working_phones_depleted = False 
     empty_rarities = set()        
     last_clicked_rarity = None    
-    last_menu_state = None        
 
     for tick in range(80):
         try:
@@ -112,22 +111,20 @@ async def twink_collect_logic(client, acc_id):
 
             action_buttons = [b for b in all_buttons if not any(x in b.text.lower() or x in b.callback_data.lower() for x in ["назад", "back", "меню", "отмена", "готов"])]
 
-            # === КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ЖМЕМ ДОБАВИТЬ ТЕЛЕФОН СРАЗУ, ЕСЛИ ОНА ЕСТЬ ===
+            # 1. ЖМЕМ ДОБАВИТЬ ТЕЛЕФОН (СТАРТОВОЕ МЕНЮ ТРЕЙДА)
             add_btn = next((b for b in all_buttons if "добавить телефон" in b.text.lower() or "add_phone" in b.callback_data.lower()), None)
             if add_btn:
-                print(f"➕ [Твинк {acc_id}] Вижу стартовую кнопку! Нажимаю '{add_btn.text}'", flush=True)
-                last_menu_state = "trade_main"
+                print(f"➕ [Твинк {acc_id}] Нажимаю '{add_btn.text}'", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, add_btn.callback_data, timeout=2)
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(1.8)  # Даем боту время обновить меню
                 continue
 
-            # --- ПРОВЕРКА СОСТОЯНИЯ ТРЕЙДА И ЛИМИТОВ ---
+            # 2. ПРОВЕРКА СОСТОЯНИЯ ТРЕЙДА И ЛИМИТОВ СЛОТОВ
             if "занято слотов" in text or "готовность:" in text:
                 slots_match = re.search(r"занято слотов:\s*(\d+)/(\d+)", text)
                 if slots_match:
                     current_slots = int(slots_match.group(1))
                     max_slots = int(slots_match.group(2))
-                    # Если слоты забились или телефоны кончились
                     if current_slots >= max_slots or (working_phones_depleted and current_slots > 0):
                         if has_button(msg, "готов"):
                             print(f"⚡ [Твинк {acc_id}] Трейд заполнен ({current_slots}/{max_slots}). Нажимаю Готов!", flush=True)
@@ -141,73 +138,58 @@ async def twink_collect_logic(client, acc_id):
                     client.collecting = False
                     return
 
-            # Детектор автоматического отката назад (если категория оказалась пустой)
-            work_btn_check = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
-            if last_menu_state == "rarity" and work_btn_check and last_clicked_rarity:
-                print(f"🚫 [Твинк {acc_id}] Редкость '{last_clicked_rarity}' оказалась пустой. В ЧС её.", flush=True)
-                empty_rarities.add(last_clicked_rarity)
-                last_clicked_rarity = None
-
-            # --- УПРАВЛЕНИЕ МЕНЮ БЫСТРОГО ВЫБОРА (ГАЛОЧКИ) ---
+            # 3. УПРАВЛЕНИЕ МЕНЮ БЫСТРОГО ВЫБОРА (ГАЛОЧКИ)
             fast_mode_off_btn = next((b for b in all_buttons if "быстрый выбор: выкл" in b.text.lower()), None)
             fast_mode_on_btn = next((b for b in all_buttons if "быстрый выбор: вкл" in b.text.lower()), None)
             add_selected_btn = next((b for b in all_buttons if "добавить выбранное" in b.text.lower() or "добавить выбранные" in b.text.lower()), None)
 
-            # 1. Если режим быстрого выбора выключен — принудительно включаем его
             if fast_mode_off_btn:
-                print(f"⚙️ [Твинк {acc_id}] Переключаю в режим БЫСТРОГО ВЫБОРА...", flush=True)
+                print(f"⚙️ [Твинк {acc_id}] Включаю режим БЫСТРОГО ВЫБОРА...", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, fast_mode_off_btn.callback_data, timeout=2)
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(1.5)
                 continue
 
             not_selected_model = next((b for b in action_buttons if "❌" in b.text), None)
             selected_model = next((b for b in action_buttons if "✅" in b.text), None)
 
-            # 2. Если мы внутри списка моделей и видим крестик — ставим галочку ровно 1 раз
+            # Если мы внутри списка моделей и видим крестик — ставим галочку ровно 1 раз
             if not_selected_model and not selected_model:
-                print(f"💎 [Твинк {acc_id}] Выбираю стек модели: [{not_selected_model.text}]", flush=True)
+                print(f"💎 [Твинк {acc_id}] Выбираю модель: [{not_selected_model.text}]", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, not_selected_model.callback_data, timeout=2)
-                last_menu_state = "model_select_fast"
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(1.5)
                 continue
 
-            # 3. Если галочка успешно поставилась — подтверждаем добавление всего стека
+            # Если галочка успешно поставилась — подтверждаем добавление всего стека
             if add_selected_btn or selected_model:
                 if add_selected_btn:
                     print(f"🚀 [Твинк {acc_id}] Подтверждаю добавление: '{add_selected_btn.text}'", flush=True)
                     await client.request_callback_answer(msg.chat.id, msg.id, add_selected_btn.callback_data, timeout=2)
                 else:
                     await click(client, msg, "добавить выбранное")
-                last_menu_state = "stack_added"
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(2.0)
                 continue
 
-            # --- НАВИГАЦИЯ ДО СПИСКА МОДЕЛЕЙ ---
-            
-            # Меню выбора редкостей (Обычные, Редкие, Мистические, Легендарные)
+            # 4. МЕНЮ ВЫБОРА РЕДКОСТЕЙ (Обычные, Редкие, Мистические, Легендарные)
             rarity_buttons = [b for b in action_buttons if any(x in b.text.lower() for x in ["обычн", "редк", "мистич", "легенд"])]
             if rarity_buttons:
                 available_rarities = [b for b in rarity_buttons if b.text.lower() not in empty_rarities]
                 
                 if not available_rarities:
-                    print(f"⚠️ [Твинк {acc_id}] Все доступные редкости пусты. Возвращаюсь назад.", flush=True)
+                    print(f"⚠️ [Твинк {acc_id}] Нет доступных редкостей. Иду назад.", flush=True)
                     await click(client, msg, "назад")
                     working_phones_depleted = True
-                    last_menu_state = "rarity_empty"
-                    await asyncio.sleep(1.2)
+                    await asyncio.sleep(1.5)
                     continue
 
-                # Приоритет: Мистические -> Редкие -> Легендарные -> Обычные
                 target_rarity = next((b for b in available_rarities if any(x in b.text.lower() for x in ["мистич", "редк", "легенд"])), available_rarities[0])
                 last_clicked_rarity = target_rarity.text.lower()
-                last_menu_state = "rarity"
                 
                 print(f"🔮 [Твинк {acc_id}] Захожу в редкость: [{target_rarity.text}]", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, target_rarity.callback_data, timeout=2)
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(1.8)  # Увеличенная пауза для загрузки моделей
                 continue
 
-            # Меню выбора состояния (Рабочий / Сломанный телефон)
+            # 5. МЕНЮ ВЫБОРА СОСТОЯНИЯ (Рабочий / Сломанный телефон)
             work_btn = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
             broken_btn = next((b for b in action_buttons if "сломан" in b.text.lower()), None)
 
@@ -219,10 +201,9 @@ async def twink_collect_logic(client, acc_id):
                 else:
                     target_btn = broken_btn or work_btn
 
-                last_menu_state = "state"
-                print(f"📱 [Твинк {acc_id}] Перехожу в категорию: '{target_btn.text}'", flush=True)
+                print(f"📱 [Твинк {acc_id}] Клик по категории: '{target_btn.text}'", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=2)
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(1.8)  # Жёсткий таймаут, чтобы бот успел прислать меню редкостей
                 continue
 
         except Exception as e:
