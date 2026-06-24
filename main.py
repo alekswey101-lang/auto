@@ -208,7 +208,7 @@ async def twink_collect_logic(client, acc_id):
             if add_btn:
                 last_menu_state = "trade_main"
                 print(f"➕ [Твинк {acc_id}] Нажимаю 'Добавить телефон'", flush=True)
-                await client.request_callback_answer(msg.chat.id, msg.id, add_btn.callback_data, timeout=2)
+                await client.request_callback_answer(msg.chat.id, msg.id, add_btn.callback_data, timeout=1.2)
                 await asyncio.sleep(1.2)
                 continue
 
@@ -253,7 +253,6 @@ async def process_bot_logic(client, message, acc_id):
     if not message: return
     if not hasattr(client, "collecting"): client.collecting = False
 
-    # --- ИСПРАВЛЕННЫЙ БЛОК СБОРА ПРИБЫЛИ И НАГРАД ---
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
@@ -261,8 +260,6 @@ async def process_bot_logic(client, message, acc_id):
                 b_text = btn.text.lower()
                 b_data = btn.callback_data.lower()
                 
-                # Добавлено "снять деньги" специально для кнопки под фермой! 
-                # Убран ломающий "return", чтобы проверялись все доступные инлайн кнопки
                 if any(x in b_text for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги"]) or "farm_claim" in b_data or "reward" in b_data:
                     try:
                         print(f"💰 [Аккаунт {acc_id}] Найдена кнопка сбора прибыли/награды [{btn.text}]. Нажимаю...", flush=True)
@@ -409,7 +406,6 @@ async def bg_tasks(client, acc_id):
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
 
-            # Ровно в 01:00 МСК - Ежедневная награда
             if msk_now.hour == 1 and msk_now.minute == 0:
                 if not reward_claimed_today:
                     print(f"🎁 [Аккаунт {acc_id}] Авто-отправка: 'ежедневная награда'", flush=True)
@@ -419,7 +415,6 @@ async def bg_tasks(client, acc_id):
                 if msk_now.hour == 1 and msk_now.minute == 2:
                     reward_claimed_today = False
 
-            # Ровно в 00:10 МСК - Майнинг
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
                     print(f"⛏ [Аккаунт {acc_id}] Авто-отправка: 'тмайнинг'", flush=True)
@@ -468,15 +463,12 @@ async def start_bot():
             c.me_id = me.id
             c.card_timer_override = None
 
-            async for _ in c.get_dialogs(limit=5): pass
-            
             if acc_id == 2:
                 print(f"👑 ГЛАВНАЯ ОСНОВА (Аккаунт 2) запущена: @{me.username}", flush=True)
                 asyncio.create_task(basis_sync_loop(c))
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            # НАДЕЖНАЯ АСИНХРОННАЯ РЕГИСТРАЦИЯ ХЕНДЛЕРОВ (Защита от зависания и пропуска кликов)
             c.add_handler(handlers.MessageHandler(
                 lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
                     process_bot_logic(current_client, message, current_id)
@@ -495,9 +487,11 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {acc_id}: {e}", flush=True)
 
-    print("🚀 Все аккаунты успешно инициализированы и готовы к автоматическому сбору прибыли!", flush=True)
-    while True: await asyncio.sleep(3600)
+    print("🚀 Все аккаунты успешно запущены и готовы к работе!", flush=True)
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(start_bot())
+            
