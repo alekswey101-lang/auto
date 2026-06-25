@@ -1,235 +1,445 @@
 # -*- coding: utf-8 -*-
-import os, re, asyncio, datetime, threading
+import os
+import re
+import asyncio
+import datetime
+import threading
 from flask import Flask
-from pyrogram import Client, handlers, filters, raw
+from pyrogram import Client, handlers, filters
+from pyrogram import raw
 
+# --- СЕРВЕР ДЛЯ RENDER (KEEP-ALIVE) ---
 app = Flask(__name__)
+
 @app.route('/')
-def health(): return "Ready and Running", 200
-threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
+def health():
+    return "Ready and Running", 200
 
-API_ID, API_HASH = int(os.environ["API_ID"]), os.environ["API_HASH"]
+threading.Thread(
+    target=lambda: app.run(
+        host='0.0.0.0',
+        port=int(os.environ.get("PORT", 10000))
+    ),
+    daemon=True
+).start()
+
+# --- CONFIG ---
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+
 SESSIONS = [os.environ.get(f"SESSION_{i}") for i in range(1, 6)]
-bot_chat, iris_bot_chat = "phonegetcardsbot", "iris_moon_bot"
-clients, twink_finished_event, AUTO_TRADE_ENABLED = [], asyncio.Event(), True
-ACC_MACROS = {"1": "boymorale", "2": "tintedwindow", "3": "cutemald", "4": "dennyom", "5": "kuznecovvb"}
 
+bot_chat = "phonegetcardsbot"
+iris_bot_chat = "iris_moon_bot"
+
+clients = []
+
+ACC_MACROS = {
+    "1": "boymorale",
+    "2": "tintedwindow",
+    "3": "cutemald",
+    "4": "dennyom",
+    "5": "kuznecovvb"
+}
+
+twink_finished_event = asyncio.Event()
+AUTO_TRADE_ENABLED = True  
+
+# --- НАДЕЖНЫЙ КЛИКЕР ---
 async def click(client, message, keyword: str) -> bool:
-    if not message or not message.reply_markup: return False
-    for row in message.reply_markup.inline_keyboard:
-        for btn in row:
-            if keyword.lower() in btn.text.lower() or keyword.lower() in (btn.callback_data or "").lower():
-                if btn.callback_data:
-                    try: await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
-                    except: pass
-                    return True
+    try:
+        if not message or not message.reply_markup:
+            return False
+
+        for row in message.reply_markup.inline_keyboard:
+            for btn in row:
+                t_low = btn.text.lower()
+                d_low = (btn.callback_data or "").lower()
+                if keyword.lower() in t_low or keyword.lower() in d_low:
+                    if btn.callback_data:
+                        try:
+                            await client.request_callback_answer(
+                                message.chat.id,
+                                message.id,
+                                btn.callback_data,
+                                timeout=2
+                            )
+                            return True
+                        except:
+                            return True
+    except:
+        pass
     return False
 
 def has_button(message, keyword: str) -> bool:
-    if not message or not message.reply_markup: return False
-    return any(keyword.lower() in b.text.lower() or keyword.lower() in (b.callback_data or "").lower() for r in message.reply_markup.inline_keyboard for b in r)
+    if not message or not message.reply_markup:
+        return False
+    for row in message.reply_markup.inline_keyboard:
+        for btn in row:
+            t_low = btn.text.lower()
+            d_low = (btn.callback_data or "").lower()
+            if keyword.lower() in t_low or keyword.lower() in d_low:
+                return True
+    return False
 
+# --- ТЕХНИЧЕСКИЙ АВТОСБОР ТВИНКА ---
 async def twink_collect_logic(client, acc_id):
     print(f"⚡ [Твинк {acc_id}] Фоновый автосбор НАЧАТ С НУЛЯ.", flush=True)
-    client.trade_counter, client.dynamic_limit = 0, 10
-    working_phones_depleted, empty_rarities = False, set()
-    last_clicked_rarity, last_menu_state = None, None
+    
+    client.trade_counter = 0
+    client.dynamic_limit = 10 
+    
+    working_phones_depleted = False 
+    empty_rarities = set()        
+    last_clicked_rarity = None    
+    last_menu_state = None        
 
     for tick in range(80):
         try:
             msg = None
             async for m in client.get_chat_history(bot_chat, limit=1):
-                msg = m; break
-            if not msg or not msg.reply_markup: raise asyncio.TimeoutError
+                msg = m
+                break
+
+            if not msg or not msg.reply_markup:
+                await asyncio.sleep(0.5)
+                continue
+
             text = msg.text.lower() if msg.text else ""
 
             if client.trade_counter >= client.dynamic_limit or "занято слотов" in text:
                 if has_button(msg, "готов"):
-                    print(f"⚡ [Твинк {acc_id}] Трейд заполнен ({client.trade_counter}). Готов!", flush=True)
-                    await click(client, msg, "готов"); twink_finished_event.set(); client.collecting = False; return
+                    print(f"⚡ [Твинк {acc_id}] Трейд успешно заполнен ({client.trade_counter}). Нажимаю Готов!", flush=True)
+                    await click(client, msg, "готов")
+                    twink_finished_event.set()
+                    client.collecting = False 
+                    return 
+
                 if "готовность: ✅" in text or "✅" in text:
-                    twink_finished_event.set(); client.collecting = False; return
-                if has_button(msg, "назад") or has_button(msg, "вернуться назад"):
-                    await click(client, msg, "назад"); await asyncio.sleep(1.0)
+                    twink_finished_event.set()
+                    client.collecting = False
+                    return
+
+                if has_button(msg, "вернуться назад") or has_button(msg, "назад"):
+                    await click(client, msg, "назад")
+                    await asyncio.sleep(1.0)
                 continue
 
-            all_btns = [b for r in msg.reply_markup.inline_keyboard for b in r if b.callback_data]
-            act_btns = [b for b in all_btns if not any(x in b.text.lower() or x in b.callback_data.lower() for x in ["назад", "back", "меню", "отмена", "готов"])]
+            all_buttons = []
+            for row in msg.reply_markup.inline_keyboard:
+                for btn in row:
+                    if btn.callback_data:
+                        all_buttons.append(btn)
 
-            if last_menu_state == "rarity" and next((b for b in act_btns if "рабоч" in b.text.lower()), None) and last_clicked_rarity:
-                print(f"🚫 [Твинк {acc_id}] Бот сбросил назад! Редкость '{last_clicked_rarity}' в ЧС.", flush=True)
-                empty_rarities.add(last_clicked_rarity); last_clicked_rarity = None
+            action_buttons = [b for b in all_buttons if not any(x in b.text.lower() or x in b.callback_data.lower() for x in ["назад", "back", "меню", "отмена", "готов"])]
 
-            single_btn = next((b for b in act_btns if "1 шт" in b.text.lower() or "single" in b.callback_data.lower()), None)
+            work_btn_check = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
+            if last_menu_state == "rarity" and work_btn_check and last_clicked_rarity:
+                print(f"🚫 [Твинк {acc_id}] Бот отбросил нас назад! Редкость '{last_clicked_rarity}' пуста. В ЧС её.", flush=True)
+                empty_rarities.add(last_clicked_rarity)
+                last_clicked_rarity = None
+
+            single_btn = next((b for b in action_buttons if "1 шт" in b.text.lower() or "single" in b.callback_data.lower()), None)
             if single_btn:
-                client.trade_counter += 1; last_menu_state = "model_select"
-                print(f"📦 [Твинк {acc_id}] Добавляю телефон [{client.trade_counter}/{client.dynamic_limit}]", flush=True)
+                client.trade_counter += 1
+                last_menu_state = "model_select"
+                print(f"📦 [Твинк {acc_id}] Добавляю телефон в обмен [{client.trade_counter}/{client.dynamic_limit}]", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, single_btn.callback_data, timeout=2)
-                await asyncio.sleep(1.5); continue
+                await asyncio.sleep(1.5)
+                continue
 
-            if act_btns and not any(any(x in b.text.lower() for x in ["рабоч", "сломан", "обычн", "редк", "мистич", "легенд"]) for b in act_btns):
-                print(f"💎 [Твинк {acc_id}] Выбираю модель телефона: [{act_btns[0].text}]", flush=True)
+            has_categories = any(any(x in b.text.lower() for x in ["рабоч", "сломан", "обычн", "редк", "мистич", "легенд"]) for b in action_buttons)
+            if action_buttons and not has_categories:
+                target_model = action_buttons[0]
                 last_menu_state = "model_list"
-                await client.request_callback_answer(msg.chat.id, msg.id, act_btns[0].callback_data, timeout=2)
-                await asyncio.sleep(1.5); continue
+                print(f"💎 [Твинк {acc_id}] Выбираю доступную модель телефона: [{target_model.text}]", flush=True)
+                await client.request_callback_answer(msg.chat.id, msg.id, target_model.callback_data, timeout=2)
+                await asyncio.sleep(1.5)
+                continue
 
-            rarity_btns = [b for b in act_btns if any(x in b.text.lower() for x in ["обычн", "редк", "мистич", "легенд"])]
-            if rarity_btns:
-                avail = [b for b in rarity_btns if b.text.lower() not in empty_rarities]
-                if not avail:
-                    print(f"⚠️ [Твинк {acc_id}] Пустая категория. Назад.", flush=True)
-                    await click(client, msg, "назад"); working_phones_depleted, last_menu_state = True, "rarity_empty"
-                    await asyncio.sleep(1.5); continue
-                tgt = next((b for b in avail if any(x in b.text.lower() for x in ["мистич", "редк", "легенд"])), avail[0])
-                last_clicked_rarity, last_menu_state = tgt.text.lower(), "rarity"
-                print(f"🔮 [Твинк {acc_id}] Выбираю редкость: [{tgt.text}]", flush=True)
-                await client.request_callback_answer(msg.chat.id, msg.id, tgt.callback_data, timeout=2)
-                await asyncio.sleep(1.5); continue
+            rarity_buttons = [b for b in action_buttons if any(x in b.text.lower() for x in ["обычн", "редк", "мистич", "легенд"])]
+            if rarity_buttons:
+                available_rarities = [b for b in rarity_buttons if b.text.lower() not in empty_rarities]
+                
+                if not available_rarities:
+                    print(f"⚠️ [Твинк {acc_id}] В этой категории все редкости пусты. Иду назад.", flush=True)
+                    await click(client, msg, "назад")
+                    working_phones_depleted = True
+                    last_menu_state = "rarity_empty"
+                    await asyncio.sleep(1.5)
+                    continue
 
-            w_btn, b_btn = next((b for b in act_btns if "рабоч" in b.text.lower()), None), next((b for b in act_btns if "сломан" in b.text.lower()), None)
-            if w_btn or b_btn:
-                if working_phones_depleted and b_btn: tgt, client.dynamic_limit = b_btn, 5
-                elif w_btn: tgt, client.dynamic_limit = w_btn, 10
-                else: tgt = b_btn or w_btn
+                target_rarity = next((b for b in available_rarities if any(x in b.text.lower() for x in ["мистич", "редк", "легенд"])), available_rarities[0])
+                last_clicked_rarity = target_rarity.text.lower()
+                last_menu_state = "rarity"
+                
+                print(f"🔮 [Твинк {acc_id}] Выбираю редкость: [{target_rarity.text}]", flush=True)
+                await client.request_callback_answer(msg.chat.id, msg.id, target_rarity.callback_data, timeout=2)
+                await asyncio.sleep(1.5)
+                continue
+
+            work_btn = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
+            broken_btn = next((b for b in action_buttons if "сломан" in b.text.lower()), None)
+
+            if work_btn or broken_btn:
+                if working_phones_depleted and broken_btn:
+                    target_btn = broken_btn
+                    client.dynamic_limit = 5
+                elif work_btn:
+                    target_btn = work_btn
+                    client.dynamic_limit = 10
+                else:
+                    target_btn = broken_btn or work_btn
+
                 last_menu_state = "state"
-                print(f"📱 [Твинк {acc_id}] Клик по состоянию: '{tgt.text}'", flush=True)
+                print(f"📱 [Твинк {acc_id}] Клик по состоянию: '{target_btn.text}'", flush=True)
                 try:
-                    res = await client.request_callback_answer(msg.chat.id, msg.id, tgt.callback_data, timeout=2)
-                    if res and hasattr(res, 'message') and any(x in res.message.lower() for x in ["нет", "доступных", "пусто"]):
-                        if tgt == w_btn: working_phones_depleted = True
-                except: pass
-                await asyncio.sleep(1.5); continue
+                    res = await client.request_callback_answer(msg.chat.id, msg.id, target_btn.callback_data, timeout=2)
+                    if res and hasattr(res, 'message') and any(x in res.message.lower() for x in ["нет", "доступных", "отсутствуют", "пусто"]):
+                        if target_btn == work_btn:
+                            working_phones_depleted = True
+                except:
+                    pass
 
-            add_btn = next((b for b in [b for r in msg.reply_markup.inline_keyboard for b in r] if "добавить телефон" in b.text.lower() or "add_phone" in (b.callback_data or "").lower()), None)
+                await asyncio.sleep(1.5)
+                continue
+
+            add_btn = next((b for b in all_buttons if "добавить телефон" in b.text.lower() or "add_phone" in b.callback_data.lower()), None)
             if add_btn:
                 last_menu_state = "trade_main"
                 print(f"➕ [Твинк {acc_id}] Нажимаю 'Добавить телефон'", flush=True)
                 await client.request_callback_answer(msg.chat.id, msg.id, add_btn.callback_data, timeout=1.2)
-                await asyncio.sleep(1.2); continue
-        except: pass
+                await asyncio.sleep(1.2)
+                continue
+
+        except Exception as e:
+            print(f"⚠️ Ошибка автосбора твинка {acc_id}: {e}", flush=True)
         await asyncio.sleep(0.5)
+
     client.collecting = False
 
+# --- ФОНОВАЯ ЗАДАЧА СИНХРОНИЗАЦИИ ДЛЯ ОСНОВЫ ---
 async def basis_sync_loop(basis_client):
     while True:
         await twink_finished_event.wait()
-        if not AUTO_TRADE_ENABLED: twink_finished_event.clear(); await asyncio.sleep(1); continue
+        if not AUTO_TRADE_ENABLED:
+            twink_finished_event.clear()
+            await asyncio.sleep(1)
+            continue
+            
         print("🔗 [СИНХРОНИЗАЦИЯ] Твинк закончил сбор. Основа прожимает готовность...", flush=True)
         for _ in range(5):
             try:
                 msg = None
-                async for m in basis_client.get_chat_history(bot_chat, limit=1): msg = m; break
+                async for m in basis_client.get_chat_history(bot_chat, limit=1):
+                    msg = m
+                    break
                 if msg:
-                    if has_button(msg, "готов"): await click(basis_client, msg, "готов"); break
-                    for r in (msg.reply_markup.inline_keyboard if msg.reply_markup else []):
-                        for b in r:
-                            if any(x in b.text.lower() for x in ["назад", "вернуться"]):
-                                await basis_client.request_callback_answer(msg.chat.id, msg.id, b.callback_data, timeout=1); break
+                    if has_button(msg, "готов"):
+                        await click(basis_client, msg, "готов")
+                        break
+                    else:
+                        for row in msg.reply_markup.inline_keyboard if msg.reply_markup else []:
+                            for btn in row:
+                                if "назад" in btn.text.lower() or "вернуться" in btn.text.lower():
+                                    await basis_client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
+                                    break
             except: pass
             await asyncio.sleep(0.5)
         twink_finished_event.clear()
 
+# --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
 async def process_bot_logic(client, message, acc_id):
     if not message: return
     if not hasattr(client, "collecting"): client.collecting = False
+
     if message.reply_markup:
-        for r in message.reply_markup.inline_keyboard:
-            for b in r:
-                if b.callback_data and (any(x in b.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги"]) or any(x in b.callback_data.lower() for x in ["farm_claim", "reward"])):
+        for row in message.reply_markup.inline_keyboard:
+            for btn in row:
+                if not btn.callback_data: continue
+                b_text = btn.text.lower()
+                b_data = btn.callback_data.lower()
+                
+                if any(x in b_text for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги"]) or "farm_claim" in b_data or "reward" in b_data:
                     try:
-                        print(f"💰 [Аккаунт {acc_id}] Сбор прибыли/награды [{b.text}]", flush=True)
-                        await client.request_callback_answer(message.chat.id, message.id, b.callback_data, timeout=3)
-                    except: pass
+                        print(f"💰 [Аккаунт {acc_id}] Найдена кнопка сбора прибыли/награды [{btn.text}]. Нажимаю...", flush=True)
+                        await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=3)
+                    except Exception as err:
+                        print(f"⚠️ [Аккаунт {acc_id}] Ошибка автоклика по '{btn.text}': {err}", flush=True)
+
     if not message.text: return
     text = message.text.lower()
 
     if "вы сможете выбить карту еще раз через" in text:
-        m = [int(x) for x in re.findall(r'(\d+)\s*(?:ч|мин|сек)', text)]
-        client.card_timer_override = max(180, sum(x * y for x, y in zip(m, [3600, 60, 1][:len(m)])) + 60)
+        hours_match = re.search(r'(\d+)\s*ч', text)
+        minutes_match = re.search(r'(\d+)\s*мин', text)
+        seconds_match = re.search(r'(\d+)\s*сек', text)
+
+        hours = int(hours_match.group(1)) if hours_match else 0
+        minutes = int(minutes_match.group(1)) if minutes_match else 0
+        seconds = int(seconds_match.group(1)) if seconds_match else 0
+
+        total_sleep_seconds = (hours * 3600) + (minutes * 60) + seconds + 60 
+        if total_sleep_seconds < 180: total_sleep_seconds = 180
+
+        client.card_timer_override = total_sleep_seconds
         return
 
-    if ("вам пришел запрос на ремонт" in text or "запрос на ремонт" in text) and has_button(message, "принять заказ"):
-        await click(client, message, "принять заказ"); return
+    if "вам пришел запрос на ремонт" in text or "запрос на ремонт" in text:
+        if has_button(message, "принять заказ"):
+            await click(client, message, "принять заказ")
+            return
 
-    if not AUTO_TRADE_ENABLED: return
-    if has_button(message, "подтвердить") or has_button(message, "trade_confirm") or "подтвердите обмен" in text or "подтвердите" in text:
-        await click(client, message, "trade_confirm"); await click(client, message, "подтвердить"); return
+    if not AUTO_TRADE_ENABLED:
+        return
 
-    if "предложение обмена" in text or "пришло предложение" in text:
-        if "ваше предложение обмена отправлено" in text: return
-        if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-            twink_finished_event.clear()
-            if acc_id != 2 and not client.collecting:
+    if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
+        await click(client, message, "trade_confirm")
+        await click(client, message, "подтвердить")
+        return
+
+    if "подтвердите обмен" in text or "подтвердите" in text:
+        if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
+            await click(client, message, "trade_confirm")
+            await click(client, message, "подтвердить")
+            return
+
+    if acc_id != 2:
+        if "предложение обмена" in text or "пришло предложение" in text:
+            if "ваше предложение обмена отправлено" in text: return
+            if await click(client, message, "trade_accept") or await click(client, message, "принять"):
+                if client.collecting: return
                 print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск автосбора.", flush=True)
-                client.collecting = True; asyncio.create_task(twink_collect_logic(client, acc_id))
+                twink_finished_event.clear() 
+                client.collecting = True
+                asyncio.create_task(twink_collect_logic(client, acc_id))
+            return
 
+    if acc_id == 2:
+        if "предложение обмена" in text or "пришло предложение" in text:
+            if "ваше предложение обмена отправлено" in text: return
+            if await click(client, message, "trade_accept") or await click(client, message, "принять"):
+                twink_finished_event.clear()
+            return
+
+# --- НАДЕЖНЫЙ ХЕНДЛЕР КОМАНД ЮЗЕРА ---
 async def handle_my_messages(client, message):
     global AUTO_TRADE_ENABLED
     if not message.text: return
+    
     parts = message.text.split()
     if not parts: return
     cmd = parts[0].lower().strip()
 
     if cmd == ".ping":
-        try: await message.edit("🚀 Юзербот активен!")
-        except: pass
-    elif cmd == ".at":
+        try: 
+            await message.edit("🚀 Юзербот активен!")
+        except: 
+            pass
+        return
+
+    if cmd == ".at":
         AUTO_TRADE_ENABLED = not AUTO_TRADE_ENABLED
-        try: await message.edit(f"🤖 **Автотрейд сейчас:** {'✅ ВКЛЮЧЕН' if AUTO_TRADE_ENABLED else '❌ ВЫКЛЮЧЕН'}"); await asyncio.sleep(3); await message.delete()
-        except: pass
-    elif cmd in [".trade", ".t", ".т"]:
+        status_text = "✅ ВКЛЮЧЕН" if AUTO_TRADE_ENABLED else "❌ ВЫКЛЮЧЕН"
+        try:
+            await message.edit(f"🤖 **Автотрейд сейчас:** {status_text}")
+            await asyncio.sleep(3)
+            await message.delete()
+        except: 
+            pass
+        return
+
+    if cmd in [".trade", ".t", ".т"]:
         target = None
-        if len(parts) == 2 and parts[1] in ACC_MACROS: target = ACC_MACROS[parts[1]]
+        # Проверяем макросы (.т 1, .т 3)
+        if len(parts) == 2 and parts[1] in ACC_MACROS: 
+            target = ACC_MACROS[parts[1]]
+        # Проверяем реплай на сообщение пользователя
         elif message.reply_to_message and message.reply_to_message.from_user:
-            target = message.reply_to_message.from_user.username or str(message.reply_to_message.from_user.id)
-        elif len(parts) >= 2: target = parts[1].replace("@", "").strip()
-        if not target: return
+            user = message.reply_to_message.from_user
+            target = user.username or str(user.id)
+        # Если юзер ввел имя напрямую (.т @username)
+        elif len(parts) >= 2: 
+            target = parts[1].replace("@", "").strip()
+
+        if not target: 
+            return
+
+        # Сначала отправляем команду боту, чтобы она гарантированно ушла!
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         try:
             await client.send_message(bot_chat, bot_cmd)
-            print(f"➡️ [Команда] Запрос на трейд: {bot_cmd}", flush=True)
-        except Exception as e: print(f"⚠️ Ошибка отправки команды: {e}", flush=True)
-        try: await message.delete()
-        except: pass
+            print(f"➡️ [Команда] Отправлен запрос на трейд: {bot_cmd}", flush=True)
+        except Exception as err:
+            print(f"⚠️ Ошибка отправки команды трейда боту: {err}", flush=True)
 
+        # Только ПОСЛЕ отправки пытаемся удалить наше триггер-сообщение (.т)
+        try: 
+            await message.delete()
+        except: 
+            pass
+
+# --- ИЗОЛИРОВАННЫЙ ТАЙМЕР КАРТОЧЕК ---
 async def card_timer_loop(client, acc_id):
     await asyncio.sleep(5)
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
+
     while True:
         try:
-            if client.card_timer_override and client.card_timer_override > 0:
-                await asyncio.sleep(client.card_timer_override); client.card_timer_override = None
+            if client.card_timer_override is not None and client.card_timer_override > 0:
+                await asyncio.sleep(client.card_timer_override)
+                client.card_timer_override = None
                 try: await client.send_message(bot_chat, "ткарточка")
                 except: pass
                 continue
-            msk = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
-            if msk.minute == 0 and msk.hour % 2 == 0:
+
+            utc_now = datetime.datetime.utcnow()
+            msk_now = utc_now + datetime.timedelta(hours=3)
+            if msk_now.minute == 0 and msk_now.hour % 2 == 0:
                 try: await client.send_message(bot_chat, "ткарточка")
                 except: pass
         except: pass
         await asyncio.sleep(30)
 
+# --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ ---
 async def bg_tasks(client, acc_id):
-    asyncio.create_task(card_timer_loop(client, acc_id)); await asyncio.sleep(8)
+    asyncio.create_task(card_timer_loop(client, acc_id))
+
+    await asyncio.sleep(8)
     try: await client.send_message(bot_chat, "тмайнинг")
     except: pass
+
     if acc_id in [1, 2]:
         try: await client.send_message(iris_bot_chat, "фарма")
         except: pass
-    rc_today, c_today, iris_timer = False, False, 0
+
+    claimed_today = False
+    reward_claimed_today = False
+    iris_timer = 0
+
     while True:
         try:
-            msk = datetime.datetime.utcnow() + datetime.timedelta(hours=3)
-            if msk.hour == 1 and msk.minute == 0 and not rc_today:
-                print(f"🎁 [Аккаунт {acc_id}] Отправка: 'ежедневная награда'", flush=True)
-                await client.send_message(bot_chat, "ежедневная награда"); rc_today = True
-            elif msk.hour == 1 and msk.minute == 2: rc_today = False
+            utc_now = datetime.datetime.utcnow()
+            msk_now = utc_now + datetime.timedelta(hours=3)
 
-            if msk.hour == 0 and msk.minute == 10 and not c_today:
-                print(f"⛏ [Аккаунт {acc_id}] Отправка: 'тмайнинг'", flush=True)
-                await client.send_message(bot_chat, "тмайнинг"); c_today = True
-            elif msk.hour == 0 and msk.minute == 11: c_today = False
+            if msk_now.hour == 1 and msk_now.minute == 0:
+                if not reward_claimed_today:
+                    print(f"🎁 [Аккаунт {acc_id}] Авто-отправка: 'ежедневная награда'", flush=True)
+                    await client.send_message(bot_chat, "ежедневная награда")
+                    reward_claimed_today = True
+            else:
+                if msk_now.hour == 1 and msk_now.minute == 2:
+                    reward_claimed_today = False
+
+            if msk_now.hour == 0 and msk_now.minute == 10:
+                if not claimed_today:
+                    print(f"⛏ [Аккаунт {acc_id}] Авто-отправка: 'тмайнинг'", flush=True)
+                    await client.send_message(bot_chat, "тмайнинг")
+                    claimed_today = True
+            else:
+                if msk_now.hour == 0 and msk_now.minute == 11: 
+                    claimed_today = False
 
             if acc_id in [1, 2]:
                 iris_timer += 1
@@ -237,31 +447,74 @@ async def bg_tasks(client, acc_id):
                     try: await client.send_message(iris_bot_chat, "фарма")
                     except: pass
                     iris_timer = 0
-        except Exception as e: print(f"⚠️ Ошибка в bg_tasks {acc_id}: {e}", flush=True)
+        except Exception as bg_err:
+            print(f"⚠️ [Аккаунт {acc_id}] Ошибка в цикле bg_tasks: {bg_err}", flush=True)
+            
         await asyncio.sleep(60)
 
+# --- СТАРТ ---
 async def start_bot():
     global clients
     print("🛠 Запуск распределенной фермы юзерботов...", flush=True)
+
     for i, session in enumerate(SESSIONS):
-        if not session or not session.strip(): continue
+        if not session or session.strip() == "": continue
+        
         acc_id = i + 1
-        c = Client(name=f"session_active_{acc_id}", api_id=API_ID, api_hash=API_HASH, session_string=session.strip(), in_memory=True)
-        c.add_handler(handlers.MessageHandler(lambda cl, msg, cur=c: cl.loop.create_task(handle_my_messages(cur, msg)), filters.me), group=1)
+        c = Client(
+            name=f"session_active_{acc_id}",
+            api_id=API_ID,
+            api_hash=API_HASH,
+            session_string=session.strip(),
+            in_memory=True,
+        )
+
+        # Регистрация хендлера команд .т / .ping БЕЗ привязки к конкретному чату
+        c.add_handler(handlers.MessageHandler(
+            lambda client, message, current_client=c: client.loop.create_task(
+                handle_my_messages(current_client, message)
+            ),
+            filters.me
+        ), group=1)
+
         try:
-            await c.start(); await c.invoke(raw.functions.updates.GetState()); clients.append(c)
-            me = await c.get_me(); c.me_id, c.card_timer_override, c.collecting = me.id, None, False
-            print(f"{'👑 ГЛАВНАЯ ОСНОВА' if acc_id == 2 else '✅ Аккаунт'} {acc_id} запущен: @{me.username}", flush=True)
-            if acc_id == 2: asyncio.create_task(basis_sync_loop(c))
+            await c.start()
+            await c.invoke(raw.functions.updates.GetState())
+            clients.append(c)
+            me = await c.get_me()
             
-            cb = lambda cl, msg, cur=c, cid=acc_id: cl.loop.create_task(process_bot_logic(cur, msg, cid))
-            c.add_handler(handlers.MessageHandler(cb, filters.chat(bot_chat)), group=0)
-            c.add_handler(handlers.EditedMessageHandler(cb, filters.chat(bot_chat)), group=0)
+            c.me_id = me.id
+            c.card_timer_override = None
+
+            if acc_id == 2:
+                print(f"👑 ГЛАВНАЯ ОСНОВА (Аккаунт 2) запущена: @{me.username}", flush=True)
+                asyncio.create_task(basis_sync_loop(c))
+            else:
+                print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
+
+            # Обработчики сообщений от игрового бота
+            c.add_handler(handlers.MessageHandler(
+                lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
+                    process_bot_logic(current_client, message, current_id)
+                ),
+                filters.chat(bot_chat)
+            ), group=0)
+
+            c.add_handler(handlers.EditedMessageHandler(
+                lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
+                    process_bot_logic(current_client, message, current_id)
+                ),
+                filters.chat(bot_chat)
+            ), group=0)
+            
             asyncio.create_task(bg_tasks(c, acc_id))
-        except Exception as e: print(f"⚠️ Ошибка запуска аккаунта {acc_id}: {e}", flush=True)
+        except Exception as e:
+            print(f"⚠️ Ошибка запуска аккаунта {acc_id}: {e}", flush=True)
+
     print("🚀 Все аккаунты успешно запущены и готовы к работе!", flush=True)
-    while True: await asyncio.sleep(3600)
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(start_bot())
-                
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start_bot())
