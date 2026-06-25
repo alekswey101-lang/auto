@@ -9,16 +9,16 @@ from flask import Flask
 # --- ДАННЫЕ ИЗ ENVIRONMENT VARIABLES RENDER ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
-BOT_ID = 7808172033  # ID игрового бота PhoneGet
+BOT_ID = 7808172033  # Актуальный ID игрового бота PhoneGet
 AUTO_TRADE_ENABLED = True
 
 # Подгружаем строки сессий из панели управления Render
 SESSIONS = [
-    os.environ.get("SESSION_1", ""),  # Твинк 1 (Индекс 1)
-    os.environ.get("SESSION_2", ""),  # ОСНОВА (Индекс 2 — автосбор отключен)
-    os.environ.get("SESSION_3", ""),  # Твинк 2 (Индекс 3)
-    os.environ.get("SESSION_4", ""),  # Твинк 3 (Индекс 4)
-    os.environ.get("SESSION_5", "")   # Твинк 4 (Индекс 5)
+    os.environ.get("SESSION_1", ""),  # Твинк 1
+    os.environ.get("SESSION_2", ""),  # ОСНОВА (автосбор отключен)
+    os.environ.get("SESSION_3", ""),  # Твинк 2
+    os.environ.get("SESSION_4", ""),  # Твинк 3
+    os.environ.get("SESSION_5", "")   # Твинк 4
 ]
 
 OWNER_IDS = []  # Наполняется автоматически при запуске скрипта
@@ -76,12 +76,10 @@ async def twink_collect_logic(client, acc_id):
                 print(f"⚠️ [Аккаунт {acc_id}] Ошибка чтения истории: {e}", flush=True)
                 continue
 
-            # Если трейд завершен или отменен
             if "обмен завершен" in msg.text.lower() or "обмен был отменен" in msg.text.lower():
                 print(f"🏁 [Аккаунт {acc_id}] Трейд окончен. Выход.", flush=True)
                 break
 
-            # Кликаем по категориям
             if has_button(msg, "рабочий телефон"):
                 await click(client, msg, "рабочий телефон")
                 continue
@@ -92,7 +90,6 @@ async def twink_collect_logic(client, acc_id):
                 await click(client, msg, "добавить телефон")
                 continue
 
-            # Выбор моделей (кнопки со смайликами телефонов)
             if msg.reply_markup:
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
@@ -111,7 +108,7 @@ async def process_bot_logic(client, message, acc_id):
     if not message: return
     if not hasattr(client, "collecting"): client.collecting = False
 
-    # 1. Сбор прибыли и наград (работает всегда на всех акках)
+    # 1. Сбор прибыли и наград
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
@@ -153,7 +150,7 @@ async def process_bot_logic(client, message, acc_id):
 
     if not AUTO_TRADE_ENABLED: return
 
-    # 4. Подтверждение обмена (для Финиша трейда)
+    # 4. Подтверждение обмена
     if has_button(message, "подтвердить") or has_button(message, "trade_confirm") or "подтвердите обмен" in text or "подтвердите" in text:
         await click(client, message, "trade_confirm")
         await click(client, message, "подтвердить")
@@ -164,15 +161,14 @@ async def process_bot_logic(client, message, acc_id):
         if "ваше предложение обмена отправлено" in text: return
         if await click(client, message, "trade_accept") or await click(client, message, "принять"):
             twink_finished_event.clear()
-            # Проверяем, что это НЕ Основа (acc_id != 2)
             if acc_id != 2 and not client.collecting:
                 print(f"✅ [Аккаунт {acc_id}] Трейд принят. Запуск автосбора.", flush=True)
                 client.collecting = True
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
 
-    # 🔥 ЖЕСТКИЙ АВТО-ПОДХВАТ МЕНЮ ОБМЕНА
-    if acc_id != 2:  # Основа игнорирует этот блок
+    # АВТО-ПОДХВАТ МЕНЮ ОБМЕНА
+    if acc_id != 2:
         if "выберите категорию телефона" in text or "открываю меню обмена" in text or has_button(message, "рабочий телефон") or has_button(message, "сломанный телефон"):
             if not client.collecting:
                 print(f"🔗 [Аккаунт {acc_id}] Найдено зависшее меню категорий! Принудительно толкаю сбор.", flush=True)
@@ -219,11 +215,12 @@ async def start_bot():
         print("❌ ОШИБКА: API_ID или API_HASH не заданы в переменных Render!", flush=True)
         return
 
-    # Шаг 1: Авто-сбор ID сессий
+    # Шаг 1: Сбор ID владельцев (сессий)
     for i, session in enumerate(SESSIONS, start=1):
         if not session: continue
         try:
-            temp_c = Client(session, api_id=API_ID, api_hash=API_HASH)
+            # Создаем короткое имя для файла сессии, а саму строку передаем в session_string
+            temp_c = Client(f"session_prefix_{i}", api_id=API_ID, api_hash=API_HASH, session_string=session, in_memory=True)
             await temp_c.start()
             me = await temp_c.get_me()
             OWNER_IDS.append(me.id)
@@ -233,14 +230,13 @@ async def start_bot():
         except Exception as e:
             print(f"❌ Не удалось прогрузить сессию {i}: {e}", flush=True)
 
-    # Шаг 2: Регистрация обработчиков
+    # Шаг 2: Запуск основных клиентов
     for i, session in enumerate(SESSIONS, start=1):
         if not session: continue
-        cl = Client(session, api_id=API_ID, api_hash=API_HASH)
+        cl = Client(f"session_active_{i}", api_id=API_ID, api_hash=API_HASH, session_string=session, in_memory=True)
         cl.card_timer_override = None
         cl.collecting = False
 
-        # Безопасный декоратор (Глушит ошибки Peer id invalid)
         @cl.on_message(filters.chat(BOT_ID) | filters.text)
         async def handler(client, message, current_acc_id=i):
             try:
@@ -248,7 +244,7 @@ async def start_bot():
             except (ValueError, KeyError, RPCError):
                 return
 
-            # Команды взаимного контроля
+            # Взаимный ручной контроль
             if message.text and message.from_user and message.from_user.id in OWNER_IDS:
                 cmd = message.text.strip().lower()
                 if cmd == ".т 1":
@@ -261,7 +257,7 @@ async def start_bot():
                     await client.send_message(BOT_ID, "ткарточка")
                     return
 
-            # Обработка логики игрового бота
+            # PhoneGet логика
             if message.chat.id == BOT_ID:
                 await process_bot_logic(client, message, current_acc_id)
 
@@ -269,7 +265,7 @@ async def start_bot():
         clients.append(cl)
         asyncio.create_task(card_timer_loop(cl, i))
 
-    print("🚀 Все активные аккаунты успешно запущены и защищены!", flush=True)
+    print("🚀 Все активные аккаунты успешно запущены и защищены от ошибок сессий!", flush=True)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
