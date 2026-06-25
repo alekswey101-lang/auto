@@ -33,6 +33,7 @@ bot_chat = "phonegetcardsbot"
 iris_bot_chat = "iris_moon_bot"
 
 clients = []
+OWNER_IDS = []  # Заполнится автоматически ID всех сессий для взаимного контроля
 
 ACC_MACROS = {
     "1": "boymorale",
@@ -84,7 +85,7 @@ def has_button(message, keyword: str) -> bool:
 
 # --- ТЕХНИЧЕСКИЙ АВТОСБОР ТВИНКА ---
 async def twink_collect_logic(client, acc_id):
-    print(f"⚡ [Твинк {acc_id}] Фоновый автосбор НАЧАТ С НУЛЯ.", flush=True)
+    print(f"⚡ [Твинк {acc_id}] Фоновый автосбор НАЧАТ.", flush=True)
     
     client.trade_counter = 0
     client.dynamic_limit = 10 
@@ -135,7 +136,7 @@ async def twink_collect_logic(client, acc_id):
 
             work_btn_check = next((b for b in action_buttons if "рабоч" in b.text.lower()), None)
             if last_menu_state == "rarity" and work_btn_check and last_clicked_rarity:
-                print(f"🚫 [Твинк {acc_id}] Бот отбросил нас назад! Редкость '{last_clicked_rarity}' пуста. В ЧС её.", flush=True)
+                print(f"🚫 [Твинк {acc_id}] Бот отбросил нас назад! Редкость '{last_clicked_rarity}' пуста. В ЧС.", flush=True)
                 empty_rarities.add(last_clicked_rarity)
                 last_clicked_rarity = None
 
@@ -221,32 +222,35 @@ async def twink_collect_logic(client, acc_id):
 # --- ФОНОВАЯ ЗАДАЧА СИНХРОНИЗАЦИИ ДЛЯ ОСНОВЫ ---
 async def basis_sync_loop(basis_client):
     while True:
-        await twink_finished_event.wait()
-        if not AUTO_TRADE_ENABLED:
-            twink_finished_event.clear()
-            await asyncio.sleep(1)
-            continue
-            
-        print("🔗 [СИНХРОНИЗАЦИЯ] Твинк закончил сбор. Основа прожимает готовность...", flush=True)
-        for _ in range(5):
-            try:
-                msg = None
-                async for m in basis_client.get_chat_history(bot_chat, limit=1):
-                    msg = m
-                    break
-                if msg:
-                    if has_button(msg, "готов"):
-                        await click(basis_client, msg, "готов")
+        try:
+            await twink_finished_event.wait()
+            if not AUTO_TRADE_ENABLED:
+                twink_finished_event.clear()
+                await asyncio.sleep(1)
+                continue
+                
+            print("🔗 [СИНХРОНИЗАЦИЯ] Твинк закончил сбор. Основа прожимает готовность...", flush=True)
+            for _ in range(5):
+                try:
+                    msg = None
+                    async for m in basis_client.get_chat_history(bot_chat, limit=1):
+                        msg = m
                         break
-                    else:
-                        for row in msg.reply_markup.inline_keyboard if msg.reply_markup else []:
-                            for btn in row:
-                                if "назад" in btn.text.lower() or "вернуться" in btn.text.lower():
-                                    await basis_client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
-                                    break
-            except: pass
-            await asyncio.sleep(0.5)
-        twink_finished_event.clear()
+                    if msg:
+                        if has_button(msg, "готов"):
+                            await click(basis_client, msg, "готов")
+                            break
+                        else:
+                            for row in msg.reply_markup.inline_keyboard if msg.reply_markup else []:
+                                for btn in row:
+                                    if "назад" in btn.text.lower() or "вернуться" in btn.text.lower():
+                                        await basis_client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=1)
+                                        break
+                except: pass
+                await asyncio.sleep(0.5)
+            twink_finished_event.clear()
+        except:
+            await asyncio.sleep(1)
 
 # --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
 async def process_bot_logic(client, message, acc_id):
@@ -262,10 +266,9 @@ async def process_bot_logic(client, message, acc_id):
                 
                 if any(x in b_text for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅", "снять деньги"]) or "farm_claim" in b_data or "reward" in b_data:
                     try:
-                        print(f"💰 [Аккаунт {acc_id}] Найдена кнопка сбора прибыли/награды [{btn.text}]. Нажимаю...", flush=True)
+                        print(f"💰 [Аккаунт {acc_id}] Клик по сбору прибыли [{btn.text}].", flush=True)
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=3)
-                    except Exception as err:
-                        print(f"⚠️ [Аккаунт {acc_id}] Ошибка автоклика по '{btn.text}': {err}", flush=True)
+                    except: pass
 
     if not message.text: return
     text = message.text.lower()
@@ -283,6 +286,7 @@ async def process_bot_logic(client, message, acc_id):
         if total_sleep_seconds < 180: total_sleep_seconds = 180
 
         client.card_timer_override = total_sleep_seconds
+        print(f"⏳ [Аккаунт {acc_id}] Новый оверрайд таймера: {total_sleep_seconds} сек.", flush=True)
         return
 
     if "вам пришел запрос на ремонт" in text or "запрос на ремонт" in text:
@@ -290,39 +294,24 @@ async def process_bot_logic(client, message, acc_id):
             await click(client, message, "принять заказ")
             return
 
-    if not AUTO_TRADE_ENABLED:
-        return
+    if not AUTO_TRADE_ENABLED: return
 
-    if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
+    if has_button(message, "подтвердить") or has_button(message, "trade_confirm") or "подтвердите обмен" in text or "подтвердите" in text:
         await click(client, message, "trade_confirm")
         await click(client, message, "подтвердить")
         return
 
-    if "подтвердите обмен" in text or "подтвердите" in text:
-        if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
-            await click(client, message, "trade_confirm")
-            await click(client, message, "подтвердить")
-            return
-
-    if acc_id != 2:
-        if "предложение обмена" in text or "пришло предложение" in text:
-            if "ваше предложение обмена отправлено" in text: return
-            if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                if client.collecting: return
+    if "предложение обмена" in text or "пришло предложение" in text:
+        if "ваше предложение обмена отправлено" in text: return
+        if await click(client, message, "trade_accept") or await click(client, message, "принять"):
+            twink_finished_event.clear()
+            if acc_id != 2 and not client.collecting:
                 print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск автосбора.", flush=True)
-                twink_finished_event.clear() 
                 client.collecting = True
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
 
-    if acc_id == 2:
-        if "предложение обмена" in text or "пришло предложение" in text:
-            if "ваше предложение обмена отправлено" in text: return
-            if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                twink_finished_event.clear()
-            return
-
-# --- НАДЕЖНЫЙ ХЕНДЛЕР КОМАНД ЮЗЕРА ---
+# --- НАДЕЖНЫЙ ХЕНДЛЕР КОМАНД С БЕЛЫМ СПИСКОМ ---
 async def handle_my_messages(client, message):
     global AUTO_TRADE_ENABLED
     if not message.text: return
@@ -332,62 +321,49 @@ async def handle_my_messages(client, message):
     cmd = parts[0].lower().strip()
 
     if cmd == ".ping":
-        try: 
-            await message.edit("🚀 Юзербот активен!")
-        except: 
-            pass
+        try: await message.reply("🚀 Юзербот активен!")
+        except: pass
         return
 
     if cmd == ".at":
         AUTO_TRADE_ENABLED = not AUTO_TRADE_ENABLED
         status_text = "✅ ВКЛЮЧЕН" if AUTO_TRADE_ENABLED else "❌ ВЫКЛЮЧЕН"
-        try:
-            await message.edit(f"🤖 **Автотрейд сейчас:** {status_text}")
-            await asyncio.sleep(3)
-            await message.delete()
-        except: 
-            pass
+        try: await message.reply(f"🤖 **Автотрейд сейчас:** {status_text}")
+        except: pass
         return
 
     if cmd in [".trade", ".t", ".т"]:
         target = None
-        # Проверяем макросы (.т 1, .т 3)
         if len(parts) == 2 and parts[1] in ACC_MACROS: 
             target = ACC_MACROS[parts[1]]
-        # Проверяем реплай на сообщение пользователя
         elif message.reply_to_message and message.reply_to_message.from_user:
             user = message.reply_to_message.from_user
             target = user.username or str(user.id)
-        # Если юзер ввел имя напрямую (.т @username)
         elif len(parts) >= 2: 
             target = parts[1].replace("@", "").strip()
 
-        if not target: 
-            return
+        if not target: return
 
-        # Сначала отправляем команду боту, чтобы она гарантированно ушла!
         bot_cmd = f"/trade {target}" if target.isdigit() else f"/trade @{target}"
         try:
             await client.send_message(bot_chat, bot_cmd)
-            print(f"➡️ [Команда] Отправлен запрос на трейд: {bot_cmd}", flush=True)
+            print(f"➡️ [Команда] Запрос на трейд: {bot_cmd}", flush=True)
         except Exception as err:
-            print(f"⚠️ Ошибка отправки команды трейда боту: {err}", flush=True)
-
-        # Только ПОСЛЕ отправки пытаемся удалить наше триггер-сообщение (.т)
-        try: 
-            await message.delete()
-        except: 
-            pass
+            print(f"⚠️ Ошибка отправки трейда: {err}", flush=True)
+            
+        try: await message.delete()
+        except: pass
 
 # --- ИЗОЛИРОВАННЫЙ ТАЙМЕР КАРТОЧЕК ---
 async def card_timer_loop(client, acc_id):
-    await asyncio.sleep(5)
+    await asyncio.sleep(5 + acc_id)
     try: await client.send_message(bot_chat, "ткарточка")
     except: pass
 
     while True:
         try:
             if client.card_timer_override is not None and client.card_timer_override > 0:
+                print(f"⏳ [Аккаунт {acc_id}] Сон по оверрайду: {client.card_timer_override} сек.", flush=True)
                 await asyncio.sleep(client.card_timer_override)
                 client.card_timer_override = None
                 try: await client.send_message(bot_chat, "ткарточка")
@@ -397,16 +373,18 @@ async def card_timer_loop(client, acc_id):
             utc_now = datetime.datetime.utcnow()
             msk_now = utc_now + datetime.timedelta(hours=3)
             if msk_now.minute == 0 and msk_now.hour % 2 == 0:
+                print(f"⏰ [Аккаунт {acc_id}] Плановый вызов 'ткарточка'", flush=True)
                 try: await client.send_message(bot_chat, "ткарточка")
                 except: pass
+                await asyncio.sleep(70) # Защита от повторного срабатывания в ту же минуту
         except: pass
-        await asyncio.sleep(30)
+        await asyncio.sleep(20)
 
 # --- ГЛАВНЫЕ ФОНОВЫЕ ЗАДАЧИ ---
 async def bg_tasks(client, acc_id):
     asyncio.create_task(card_timer_loop(client, acc_id))
 
-    await asyncio.sleep(8)
+    await asyncio.sleep(8 + acc_id)
     try: await client.send_message(bot_chat, "тмайнинг")
     except: pass
 
@@ -425,7 +403,6 @@ async def bg_tasks(client, acc_id):
 
             if msk_now.hour == 1 and msk_now.minute == 0:
                 if not reward_claimed_today:
-                    print(f"🎁 [Аккаунт {acc_id}] Авто-отправка: 'ежедневная награда'", flush=True)
                     await client.send_message(bot_chat, "ежедневная награда")
                     reward_claimed_today = True
             else:
@@ -434,7 +411,6 @@ async def bg_tasks(client, acc_id):
 
             if msk_now.hour == 0 and msk_now.minute == 10:
                 if not claimed_today:
-                    print(f"⛏ [Аккаунт {acc_id}] Авто-отправка: 'тмайнинг'", flush=True)
                     await client.send_message(bot_chat, "тмайнинг")
                     claimed_today = True
             else:
@@ -447,16 +423,32 @@ async def bg_tasks(client, acc_id):
                     try: await client.send_message(iris_bot_chat, "фарма")
                     except: pass
                     iris_timer = 0
-        except Exception as bg_err:
-            print(f"⚠️ [Аккаунт {acc_id}] Ошибка в цикле bg_tasks: {bg_err}", flush=True)
+        except Exception as e:
+            print(f"⚠️ Ошибка bg_tasks на {acc_id}: {e}", flush=True)
             
         await asyncio.sleep(60)
 
 # --- СТАРТ ---
 async def start_bot():
-    global clients
-    print("🛠 Запуск распределенной фермы юзерботов...", flush=True)
+    global clients, OWNER_IDS
+    print("🛠 Предварительный сбор Telegram ID для белого списка команд...", flush=True)
 
+    # Шаг 1: Автоматически достаем ID каждого аккаунта
+    for i, session in enumerate(SESSIONS):
+        if not session or session.strip() == "": continue
+        try:
+            temp_c = Client(name=f"temp_{i}", api_id=API_ID, api_hash=API_HASH, session_string=session.strip(), in_memory=True)
+            await temp_c.start()
+            me = await temp_c.get_me()
+            if me.id not in OWNER_IDS:
+                OWNER_IDS.append(me.id)
+            await temp_c.stop()
+        except Exception as e:
+            print(f"❌ Не удалось прочесть сессию {i+1}: {e}")
+
+    print(f"👤 Авторизованный белый список ID: {OWNER_IDS}", flush=True)
+
+    # Шаг 2: Полноценный запуск фермы
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
         
@@ -469,12 +461,12 @@ async def start_bot():
             in_memory=True,
         )
 
-        # Регистрация хендлера команд .т / .ping БЕЗ привязки к конкретному чату
+        # ТЕПЕРЬ СЛУШАЕТ И СЕБЯ, И ЛЮБОЙ ДРУГОЙ ТВОЙ АККАУНТ ИЗ СЕТИ
         c.add_handler(handlers.MessageHandler(
             lambda client, message, current_client=c: client.loop.create_task(
                 handle_my_messages(current_client, message)
             ),
-            filters.me
+            filters.me | filters.user(OWNER_IDS)
         ), group=1)
 
         try:
@@ -492,20 +484,11 @@ async def start_bot():
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            # Обработчики сообщений от игрового бота
-            c.add_handler(handlers.MessageHandler(
-                lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
-                    process_bot_logic(current_client, message, current_id)
-                ),
-                filters.chat(bot_chat)
-            ), group=0)
-
-            c.add_handler(handlers.EditedMessageHandler(
-                lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
-                    process_bot_logic(current_client, message, current_id)
-                ),
-                filters.chat(bot_chat)
-            ), group=0)
+            cb = lambda client, message, current_client=c, current_id=acc_id: client.loop.create_task(
+                process_bot_logic(current_client, message, current_id)
+            )
+            c.add_handler(handlers.MessageHandler(cb, filters.chat(bot_chat)), group=0)
+            c.add_handler(handlers.EditedMessageHandler(cb, filters.chat(bot_chat)), group=0)
             
             asyncio.create_task(bg_tasks(c, acc_id))
         except Exception as e:
