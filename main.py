@@ -12,12 +12,13 @@ API_HASH = "твой_api_hash"  # Вставь свой API HASH
 BOT_ID = 5701830574  # ID игрового бота PhoneGet
 AUTO_TRADE_ENABLED = True
 
-# Сессии твоих аккаунтов (строки или пути к файлам)
+# Сессии твоих 5 аккаунтов. Порядок важен!
 SESSIONS = [
-    "session_1",  # Основа (обычно Acc 2 в твоих логах)
-    "session_2",  # Твинк 1
-    "session_3",  # Твинк 2
-    "session_4"   # Твинк 3
+    "session_1",  # Твинк 1 (Индекс 1)
+    "session_2",  # ОСНОВА (Индекс 2 — сбор для неё отключен)
+    "session_3",  # Твинк 2 (Индекс 3)
+    "session_4",  # Твинк 3 (Индекс 4)
+    "session_5"   # Твинк 4 (Индекс 5)
 ]
 
 OWNER_IDS = []  # Заполнится автоматически ID всех сессий при старте
@@ -63,7 +64,7 @@ async def click(client, message, target_text):
 
 # --- ЛОГИКА АВТОСБОРА ДЛЯ ТВИНКОВ ---
 async def twink_collect_logic(client, acc_id):
-    print(f"🚀 [Твинк {acc_id}] Алгоритм сбора запущен.", flush=True)
+    print(f"🚀 [Аккаунт {acc_id}] Алгоритм сбора запущен.", flush=True)
     try:
         while not twink_finished_event.is_set():
             await asyncio.sleep(1.5)
@@ -72,12 +73,12 @@ async def twink_collect_logic(client, acc_id):
                 if not history: continue
                 msg = history[0]
             except Exception as e:
-                print(f"⚠️ [Твинк {acc_id}] Ошибка чтения истории: {e}", flush=True)
+                print(f"⚠️ [Аккаунт {acc_id}] Ошибка чтения истории: {e}", flush=True)
                 continue
 
             # Если трейд завершен или отменен
             if "обмен завершен" in msg.text.lower() or "обмен был отменен" in msg.text.lower():
-                print(f"🏁 [Твинк {acc_id}] Трейд окончен. Выход.", flush=True)
+                print(f"🏁 [Аккаунт {acc_id}] Трейд окончен. Выход.", flush=True)
                 break
 
             # Кликаем по категориям
@@ -100,7 +101,7 @@ async def twink_collect_logic(client, acc_id):
                                 await client.request_callback_answer(msg.chat.id, msg.id, btn.callback_data, timeout=2)
                             except: pass
     except Exception as e:
-        print(f"❌ [Твинк {acc_id}] Ошибка в цикле автосбора: {e}", flush=True)
+        print(f"❌ [Аккаунт {acc_id}] Ошибка в цикле автосбора: {e}", flush=True)
     finally:
         client.collecting = False
 
@@ -110,7 +111,7 @@ async def process_bot_logic(client, message, acc_id):
     if not message: return
     if not hasattr(client, "collecting"): client.collecting = False
 
-    # 1. Сбор прибыли и наград (работает всегда)
+    # 1. Сбор прибыли и наград (работает всегда на всех акках)
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
@@ -152,7 +153,7 @@ async def process_bot_logic(client, message, acc_id):
 
     if not AUTO_TRADE_ENABLED: return
 
-    # 4. Подтверждение обмена (для Финиша)
+    # 4. Подтверждение обмена (для Финиша трейда)
     if has_button(message, "подтвердить") or has_button(message, "trade_confirm") or "подтвердите обмен" in text or "подтвердите" in text:
         await click(client, message, "trade_confirm")
         await click(client, message, "подтвердить")
@@ -163,22 +164,22 @@ async def process_bot_logic(client, message, acc_id):
         if "ваше предложение обмена отправлено" in text: return
         if await click(client, message, "trade_accept") or await click(client, message, "принять"):
             twink_finished_event.clear()
+            # Проверяем, что это НЕ Основа (acc_id != 2)
             if acc_id != 2 and not client.collecting:
-                print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск автосбора.", flush=True)
+                print(f"✅ [Аккаунт {acc_id}] Трейд принят. Запуск автосбора.", flush=True)
                 client.collecting = True
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             return
 
-    # 🔥 ЖЕСТКИЙ АВТО-ПОДХВАТ МЕНЮ ОБМЕНА (Решает проблему зависания интерфейса)
-    if acc_id != 2:
+    # 🔥 ЖЕСТКИЙ АВТО-ПОДХВАТ МЕНЮ ОБМЕНА
+    if acc_id != 2:  # Основа игнорирует этот блок
         if "выберите категорию телефона" in text or "открываю меню обмена" in text or has_button(message, "рабочий телефон") or has_button(message, "сломанный телефон"):
             if not client.collecting:
-                print(f"🔗 [Твинк {acc_id}] Найдено зависшее меню категорий! Принудительно толкаю сбор.", flush=True)
+                print(f"🔗 [Аккаунт {acc_id}] Найдено зависшее меню категорий! Принудительно толкаю сбор.", flush=True)
                 twink_finished_event.clear()
                 client.collecting = True
                 asyncio.create_task(twink_collect_logic(client, acc_id))
             else:
-                # Если сбор запущен, но бот замер, помогаем ему нажать первую кнопку
                 work_btn = next((b for row in message.reply_markup.inline_keyboard for b in row if "рабоч" in b.text.lower()), None)
                 if work_btn:
                     try:
@@ -188,19 +189,19 @@ async def process_bot_logic(client, message, acc_id):
 
 # --- ЦИКЛ ОТПРАВКИ КАРТОЧЕК ---
 async def card_timer_loop(client, acc_id):
-    await asyncio.sleep(10) # Даем боту прогрузиться при старте
+    await asyncio.sleep(10)
     while True:
         try:
             client.card_timer_override = None
             print(f"🃏 [Аккаунт {acc_id}] Отправка команды: ткарточка", flush=True)
             await client.send_message(BOT_ID, "ткарточка")
             
-            await asyncio.sleep(10) # Ждем ответа бота для парсинга оверрайда
+            await asyncio.sleep(10)
             
             if client.card_timer_override:
                 sleep_time = client.card_timer_override
             else:
-                sleep_time = 7300 # По умолчанию ~2 часа
+                sleep_time = 7300
                 
             print(f"💤 [Аккаунт {acc_id}] Спим {sleep_time} сек до следующей карточки.", flush=True)
             await asyncio.sleep(sleep_time)
@@ -222,7 +223,8 @@ async def start_bot():
             me = await temp_c.get_me()
             OWNER_IDS.append(me.id)
             await temp_c.stop()
-            print(f" Loaded Acc {i}: ID {me.id}", flush=True)
+            prefix = "ОСНОВА" if i == 2 else f"Твинк {i if i < 2 else i-1}"
+            print(f" Loaded Acc {i} ({prefix}): ID {me.id}", flush=True)
         except Exception as e:
             print(f"❌ Не удалось прогрузить сессию {session}: {e}", flush=True)
 
@@ -236,10 +238,9 @@ async def start_bot():
         @cl.on_message(filters.chat(BOT_ID) | filters.text)
         async def handler(client, message, current_acc_id=i):
             try:
-                # Жесткая проверка валидности ID чата (Защита от краша Pyrogram)
                 _ = message.chat.id
             except (ValueError, KeyError, RPCError):
-                return # Просто игнорируем битые апдейты
+                return
 
             # Команды взаимного контроля
             if message.text and message.from_user and message.from_user.id in OWNER_IDS:
@@ -261,10 +262,10 @@ async def start_bot():
         await cl.start()
         clients.append(cl)
         
-        # Запускаем бесконечный таймер отправки карточек для каждого аккаунта
+        # Карточки отправляют все 5 аккаунтов
         asyncio.create_task(card_timer_loop(cl, i))
 
-    print("🚀 Все аккаунты успешно запущены и защищены!", flush=True)
+    print("🚀 Все 5 аккаунтов успешно запущены и защищены!", flush=True)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
