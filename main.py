@@ -10,7 +10,6 @@ from flask import Flask
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 
-# Теперь боты задаются как строки-юзернеймы, без ломающих синтаксис символов
 BOT_USERNAME = "@phonegetcardsbot"
 IRIS_BOT_USERNAME = "@iris_moon_bot"
 AUTO_TRADE_ENABLED = True
@@ -249,7 +248,6 @@ async def start_bot():
             me = await temp_c.get_me()
             OWNER_IDS.append(me.id)
             
-            # Резолвим числовые ID ботов автоматически из их юзернеймов при первом запуске
             if BOT_ID is None:
                 peer = await temp_c.resolve_peer(BOT_USERNAME)
                 BOT_ID = peer.user_id if hasattr(peer, "user_id") else peer.channel_id
@@ -271,32 +269,53 @@ async def start_bot():
         cl = Client(f"session_active_{i}", api_id=API_ID, api_hash=API_HASH, session_string=session, in_memory=True)
         cl.card_timer_override = None
         cl.collecting = False
+        cl.my_telegram_id = OWNER_IDS[i-1]  # Сохраняем личный ID аккаунта прямо в его объект клиента
 
-        # Хэндлер на твои собственные исходящие команды во всех чатах
-        @cl.on_message(filters.me & filters.text)
-        async def manual_commands_handler(client, message, current_acc_id=i):
-            cmd = message.text.strip().lower()
-            if cmd.startswith(".т 1"):
-                await client.send_message(BOT_USERNAME, "тмайнинг")
-            elif cmd.startswith(".т 2"):
-                await client.send_message(BOT_USERNAME, "тработа")
-            elif cmd.startswith(".ткарточка") or cmd.startswith(".ат"):
-                await client.send_message(BOT_USERNAME, "ткарточка")
+        # Глобальный хэндлер без жестких фильтров
+        @cl.on_message()
+        async def global_handler(client, message, current_acc_id=i):
+            try:
+                if not message.text:
+                    return
 
-        # Хэндлер на сообщения от бота PhoneGet
-        @cl.on_message(filters.chat(BOT_ID) if BOT_ID else filters.chat(BOT_USERNAME))
-        async def bot_handler(client, message, current_acc_id=i):
-            await process_bot_logic(client, message, current_acc_id)
+                # ПРОВЕРКА ЛИЧНЫХ КОМАНД (Сравниваем ID отправителя с ID текущего аккаунта)
+                if message.from_user and message.from_user.id == client.my_telegram_id:
+                    cmd = message.text.strip().lower()
+                    if cmd.startswith(".т 1"):
+                        print(f"⌨️ [Аккаунт {current_acc_id}] Обнаружена команда .т 1. Шлю 'тмайнинг'", flush=True)
+                        await client.send_message(BOT_USERNAME, "тмайнинг")
+                        return
+                    elif cmd.startswith(".т 2"):
+                        print(f"⌨️ [Аккаунт {current_acc_id}] Обнаружена команда .т 2. Шлю 'тработа'", flush=True)
+                        await client.send_message(BOT_USERNAME, "тработа")
+                        return
+                    elif cmd.startswith(".ткарточка") or cmd.startswith(".ат"):
+                        print(f"⌨️ [Аккаунт {current_acc_id}] Обнаружена команда карточки. Шлю 'ткарточка'", flush=True)
+                        await client.send_message(BOT_USERNAME, "ткарточка")
+                        return
+
+                # ЛОГИКА ОТВЕТОВ БОТА PHONEGET
+                is_target_bot = False
+                if message.from_user and (message.from_user.id == BOT_ID or message.from_user.username == "phonegetcardsbot"):
+                    is_target_bot = True
+                elif message.chat and message.chat.id == BOT_ID:
+                    is_target_bot = True
+
+                if is_target_bot:
+                    await process_bot_logic(client, message, current_acc_id)
+
+            except Exception as handler_err:
+                pass
 
         await cl.start()
         clients.append(cl)
         
-        # Запуск тасок
+        # Запуск фоновых задач
         asyncio.create_task(card_timer_loop(cl, i))
         if i in [1, 2]:
             asyncio.create_task(iris_farm_loop(cl, i))
 
-    print("🚀 Все аккаунты на связи! Ошибки синтаксиса устранены, автоматизация запущена.", flush=True)
+    print("🚀 Команды полностью переписаны на ID-проверку. Теперь они работают ВЕЗДЕ!", flush=True)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
