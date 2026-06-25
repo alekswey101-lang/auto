@@ -447,19 +447,6 @@ async def start_bot():
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
-        
-        # Настройка фильтра чата с защитой от падений по Peer id invalid
-        def make_chat_filter(target_chat):
-            def chat_filter_func(_, __, message):
-                try:
-                    if message.chat and message.chat.username and message.chat.username.lower() == target_chat.lower():
-                        return True
-                    if message.chat and str(message.chat.id) == target_chat:
-                        return True
-                except:
-                    pass
-                return False
-            return filters.create(chat_filter_func)
 
         c = Client(
             name=f"session_active_{i+1}",
@@ -469,14 +456,17 @@ async def start_bot():
             in_memory=True,
         )
 
-        # Хэндлер на твои исходящие команды (.т 1, .at и тд)
         c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
 
         try:
             await c.start()
             
-            # 🔥 ЖЕСТКИЙ ПИНГ ТЕЛЕГРАМА ДЛЯ АКТИВАЦИИ ПОТОКА ОБНОВЛЕНИЙ НА СЕССИИ (РЕШАЕТ ПРОБЛЕМУ СЛЕПОТЫ)
+            # Активируем поток обновлений
             await c.invoke(raw.functions.updates.GetState())
+            
+            # Динамически получаем железный ID бота (убирает баг пропущенных сообщений)
+            chat_info = await c.get_chat(bot_chat)
+            real_bot_id = chat_info.id
             
             clients.append(c)
             me = await c.get_me()
@@ -492,24 +482,24 @@ async def start_bot():
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            # Безопасные хэндлеры событий бота PhoneGet
-            bot_filter = make_chat_filter(bot_chat)
+            # Точный фильтр по железному ID чата бота
+            strict_bot_filter = filters.chat(real_bot_id)
             
             c.add_handler(handlers.MessageHandler(
                 lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
-                bot_filter
+                strict_bot_filter
             ), group=0)
 
             c.add_handler(handlers.EditedMessageHandler(
                 lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
-                bot_filter
+                strict_bot_filter
             ), group=0)
             
             asyncio.create_task(bg_tasks(c, acc_id))
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт готов к работе. Макросы и переключатель .at активны.", flush=True)
+    print("🚀 Скрипт готов к работе. Макросы и автопринятие активны.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
