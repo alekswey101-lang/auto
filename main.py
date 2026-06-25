@@ -9,16 +9,18 @@ from flask import Flask
 # --- ДАННЫЕ ИЗ ENVIRONMENT VARIABLES RENDER ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
-BOT_ID = 7808172033  # Актуальный ID игрового бота PhoneGet
+
+BOT_ID = @phonegetcardsbot       # Актуальный ID игрового бота PhoneGet
+IRIS_BOT_ID = "@iris_moon_bot"  # Юзернейм Ирис бота для фармы
 AUTO_TRADE_ENABLED = True
 
 # Подгружаем строки сессий из панели управления Render
 SESSIONS = [
-    os.environ.get("SESSION_1", ""),  # Твинк 1
-    os.environ.get("SESSION_2", ""),  # ОСНОВА (автосбор отключен)
-    os.environ.get("SESSION_3", ""),  # Твинк 2
-    os.environ.get("SESSION_4", ""),  # Твинк 3
-    os.environ.get("SESSION_5", "")   # Твинк 4
+    os.environ.get("SESSION_1", ""),  # Твинк 1 (Acc 1) -> Нужен Ирис
+    os.environ.get("SESSION_2", ""),  # ОСНОВА (Acc 2)  -> Нужен Ирис
+    os.environ.get("SESSION_3", ""),  # Твинк 2 (Acc 3)
+    os.environ.get("SESSION_4", ""),  # Твинк 3 (Acc 4)
+    os.environ.get("SESSION_5", "")   # Твинк 4 (Acc 5)
 ]
 
 OWNER_IDS = []  # Наполняется автоматически при запуске скрипта
@@ -62,7 +64,7 @@ async def click(client, message, target_text):
     return False
 
 
-# --- ЛОГИКА АВТОСБОРА ДЛЯ ТВИНКОВ ---
+# --- ЛОГИКА АВТОСБОРА ДЛЯ ТВИНКОВ (PhoneGet) ---
 async def twink_collect_logic(client, acc_id):
     print(f"🚀 [Аккаунт {acc_id}] Алгоритм сбора запущен.", flush=True)
     try:
@@ -185,7 +187,7 @@ async def process_bot_logic(client, message, acc_id):
 
 # --- ЦИКЛ ОТПРАВКИ КАРТОЧЕК ---
 async def card_timer_loop(client, acc_id):
-    await asyncio.sleep(10)
+    await asyncio.sleep(15)  # Даем время на полный запуск всех сессий
     while True:
         try:
             client.card_timer_override = None
@@ -207,6 +209,22 @@ async def card_timer_loop(client, acc_id):
             await asyncio.sleep(30)
 
 
+# --- ТАЙМЕР ДЛЯ ИРИС ФАРМЫ (АККАУНТЫ 1 И 2) ---
+async def iris_farm_loop(client, acc_id):
+    await asyncio.sleep(30)  # Сдвигаем старт фармы, чтобы не спамить одновременно
+    while True:
+        try:
+            prefix = "ОСНОВА" if acc_id == 2 else "Твинк 1"
+            print(f"🌌 [Ирис Фарма - {prefix}] Отправка команды: фарма", flush=True)
+            await client.send_message(IRIS_BOT_ID, "фарма")
+            
+            # 241 минута = 241 * 60 = 14460 секунд
+            await asyncio.sleep(14460)
+        except Exception as e:
+            print(f"⚠️ [Ирис Фарма - Acc {acc_id}] Ошибка: {e}. Повтор через 60 сек.", flush=True)
+            await asyncio.sleep(60)
+
+
 # --- ЗАПУСК ВСЕХ КЛИЕНТОВ ---
 async def start_bot():
     print("🤖 Запуск инициализации аккаунтов...", flush=True)
@@ -215,15 +233,23 @@ async def start_bot():
         print("❌ ОШИБКА: API_ID или API_HASH не заданы в переменных Render!", flush=True)
         return
 
-    # Шаг 1: Сбор ID владельцев (сессий)
+    # Шаг 1: Сбор ID владельцев (сессий) и предварительный resolve_peer, чтобы избежать PEER_ID_INVALID
     for i, session in enumerate(SESSIONS, start=1):
         if not session: continue
         try:
-            # Создаем короткое имя для файла сессии, а саму строку передаем в session_string
             temp_c = Client(f"session_prefix_{i}", api_id=API_ID, api_hash=API_HASH, session_string=session, in_memory=True)
             await temp_c.start()
             me = await temp_c.get_me()
             OWNER_IDS.append(me.id)
+            
+            # Принудительно знакомим аккаунт с ботами, кэшируя их peer_id в сессию
+            try:
+                await temp_c.resolve_peer(BOT_ID)
+                if i in [1, 2]:  # Для 1 и 2 аккаунтов кэшируем еще и Ирис
+                    await temp_c.resolve_peer(IRIS_BOT_ID)
+            except Exception as pe:
+                print(f"ℹ️ Не критичное предупреждение кэширования пиров для Acc {i}: {pe}", flush=True)
+
             await temp_c.stop()
             prefix = "ОСНОВА" if i == 2 else f"Твинк {i if i < 2 else i-1}"
             print(f" Loaded Acc {i} ({prefix}): ID {me.id}", flush=True)
@@ -237,35 +263,37 @@ async def start_bot():
         cl.card_timer_override = None
         cl.collecting = False
 
-        @cl.on_message(filters.chat(BOT_ID) | filters.text)
-        async def handler(client, message, current_acc_id=i):
+        @cl.on_message(filters.me & filters.text)
+        async def manual_commands_handler(client, message, current_acc_id=i):
+            """Обработчик ваших личных текстовых команд .т и .ат для взаимного контроля"""
+            cmd = message.text.strip().lower()
+            if cmd.startswith(".т 1"):
+                await client.send_message(BOT_ID, "тмайнинг")
+            elif cmd.startswith(".т 2"):
+                await client.send_message(BOT_ID, "тработа")
+            elif cmd.startswith(".ткарточка") or cmd.startswith(".ат"):
+                await client.send_message(BOT_ID, "ткарточка")
+
+        @cl.on_message(filters.chat(BOT_ID))
+        async def bot_handler(client, message, current_acc_id=i):
+            """Обработчик сообщений от игрового бота PhoneGet"""
             try:
                 _ = message.chat.id
             except (ValueError, KeyError, RPCError):
                 return
-
-            # Взаимный ручной контроль
-            if message.text and message.from_user and message.from_user.id in OWNER_IDS:
-                cmd = message.text.strip().lower()
-                if cmd == ".т 1":
-                    await client.send_message(BOT_ID, "тмайнинг")
-                    return
-                elif cmd == ".т 2":
-                    await client.send_message(BOT_ID, "тработа")
-                    return
-                elif cmd.startswith(".ткарточка"):
-                    await client.send_message(BOT_ID, "ткарточка")
-                    return
-
-            # PhoneGet логика
-            if message.chat.id == BOT_ID:
-                await process_bot_logic(client, message, current_acc_id)
+            await process_bot_logic(client, message, current_acc_id)
 
         await cl.start()
         clients.append(cl)
+        
+        # Запуск цикла для PhoneGet карточек (для всех аккаунтов)
         asyncio.create_task(card_timer_loop(cl, i))
+        
+        # Запуск цикла Ирис Фармы только для Первого (i=1) и Второго (i=2) аккаунта
+        if i in [1, 2]:
+            asyncio.create_task(iris_farm_loop(cl, i))
 
-    print("🚀 Все активные аккаунты успешно запущены и защищены от ошибок сессий!", flush=True)
+    print("🚀 Все активные аккаунты успешно запущены, команды исправлены, Ирис фарма на 1 и 2 акках активна!", flush=True)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
