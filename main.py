@@ -216,7 +216,7 @@ async def twink_collect_logic(client, acc_id):
             if add_btn:
                 last_menu_state = "trade_main"
                 print(f"➕ [Твинк {acc_id}] Нажимаю 'Добавить телефон'", flush=True)
-                await client.request_callback_answer(msg.chat.id, msg.id, add_btn.callback_data, timeout=2)
+                await client.request_callback_answer(msg.chat.id, msg.id, add_btn.callback_data, timeout=1.2)
                 await asyncio.sleep(1.2)
                 continue
 
@@ -264,17 +264,18 @@ async def basis_sync_loop(basis_client):
 async def process_bot_logic(client, message, acc_id):
     if not message: return
     
-    # ПРОВЕРКА НА БОТА ИЗ СТАРОГО КОДА (Пропускает и по юзернейму, и по названию чата)
+    # Жесткая проверка: реагируем только на сообщения от нужного бота
     is_bot = False
     if message.chat and message.chat.username and message.chat.username.lower() == bot_chat.lower():
         is_bot = True
     elif message.from_user and message.from_user.username and message.from_user.username.lower() == bot_chat.lower():
         is_bot = True
         
-    if not is_bot: return  # Если это сообщение не от бота phoneget — игнорируем
+    if not is_bot: return
 
     if not hasattr(client, "collecting"): client.collecting = False
 
+    # Автосбор денег/прибыли
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
@@ -288,6 +289,7 @@ async def process_bot_logic(client, message, acc_id):
     if not message.text: return
     text = message.text.lower()
 
+    # Таймер карточки
     if "вы сможете выбить карту еще раз через" in text:
         hours_match = re.search(r'(\d+)\s*ч', text)
         minutes_match = re.search(r'(\d+)\s*мин', text)
@@ -303,6 +305,7 @@ async def process_bot_logic(client, message, acc_id):
         client.card_timer_override = total_sleep_seconds
         return
 
+    # Запрос на ремонт
     if "вам пришел запрос на ремонт" in text or "запрос на ремонт" in text:
         if has_button(message, "принять заказ"):
             await click(client, message, "принять заказ")
@@ -311,6 +314,7 @@ async def process_bot_logic(client, message, acc_id):
     if not AUTO_TRADE_ENABLED:
         return
 
+    # Подтверждение окончательного обмена
     if has_button(message, "подтвердить") or has_button(message, "trade_confirm"):
         await click(client, message, "trade_confirm")
         await click(client, message, "подтвердить")
@@ -322,22 +326,21 @@ async def process_bot_logic(client, message, acc_id):
             await click(client, message, "подтвердить")
             return
 
-    if acc_id != 2:
-        if "предложение обмена" in text or "пришло предложение" in text:
-            if "ваше предложение обмена отправлено" in text: return
-            if await click(client, message, "trade_accept") or await click(client, message, "принять"):
-                if client.collecting: return
-                print(f"✅ [Твинк {acc_id}] Трейд принят. Запуск автосбора.", flush=True)
-                twink_finished_event.clear() 
-                client.collecting = True
-                asyncio.create_task(twink_collect_logic(client, acc_id))
-            return
-
-    if acc_id == 2:
-        if "предложение обмена" in text or "пришло предложение" in text:
-            if "ваше предложение обмена отправлено" in text: return
+    # --- ПРИНЯТИЕ ОБМЕНА (ДЛЯ ВСЕХ АККАУНТОВ) ---
+    if "предложение обмена" in text or "пришло предложение" in text or "обмена отправлено" in text or has_button(message, "trade_accept"):
+        # Пытаемся нажать кнопку принять трейд
+        if has_button(message, "trade_accept") or has_button(message, "принять"):
             if await click(client, message, "trade_accept") or await click(client, message, "принять"):
                 twink_finished_event.clear()
+                
+                # Если это твинк (все кроме Аккаунта 2) — запускаем ему алгоритм набивания слотов
+                if acc_id != 2:
+                    if client.collecting: return
+                    print(f"✅ [Твинк {acc_id}] Трейд успешно ПРИНЯТ. Запуск автосбора.", flush=True)
+                    client.collecting = True
+                    asyncio.create_task(twink_collect_logic(client, acc_id))
+                else:
+                    print(f"👑 [Основа] Трейд успешно ПРИНЯТ.", flush=True)
             return
 
 # --- ХЕНДЛЕР КОМАНД ЮЗЕРА ---
@@ -453,7 +456,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Возврат к проверенной структуре хэндлеров без фильтров...", flush=True)
+    print("🛠 Перезапуск фермы с исправленными триггерами принятия трейда...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -466,13 +469,12 @@ async def start_bot():
             in_memory=True,
         )
 
-        # Твои команды (.т)
         c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
 
         try:
             await c.start()
             
-            # Активируем поток обновлений сессии
+            # Обновление состояния сессии
             await c.invoke(raw.functions.updates.GetState())
             
             clients.append(c)
@@ -489,8 +491,7 @@ async def start_bot():
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            # 🔥 ВОЗВРАТ К СТАРЫМ РАБОЧИМ ХЭНДЛЕРАМ БЕЗ СТРОГИХ ФИЛЬТРОВ
-            # Всё фильтруется прямо внутри функции process_bot_logic
+            # Универсальные хэндлеры
             c.add_handler(handlers.MessageHandler(
                 lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id)
             ), group=0)
@@ -503,7 +504,7 @@ async def start_bot():
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт запущен в первоначальном режиме. Тестируй трейд!", flush=True)
+    print("🚀 Скрипт запущен. Логика трейда исправлена.", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
