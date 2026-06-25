@@ -269,32 +269,28 @@ async def start_bot():
         cl = Client(f"session_active_{i}", api_id=API_ID, api_hash=API_HASH, session_string=session, in_memory=True)
         cl.card_timer_override = None
         cl.collecting = False
-        cl.my_telegram_id = OWNER_IDS[i-1]  # Сохраняем личный ID аккаунта прямо в его объект клиента
 
-        # Глобальный хэндлер без жестких фильтров
-        @cl.on_message()
-        async def global_handler(client, message, current_acc_id=i):
+        # ХЭНДЛЕР №1: Железный перехват ИСКЛЮЧИТЕЛЬНО твоих исходящих команд (.т)
+        @cl.on_message(filters.outgoing & filters.text)
+        async def manual_commands_handler(client, message, current_acc_id=i):
             try:
-                if not message.text:
-                    return
+                cmd = message.text.strip().lower()
+                if cmd.startswith(".т 1"):
+                    print(f"⌨️ [Аккаунт {current_acc_id}] Исходящая команда .т 1. Шлю 'тмайнинг'", flush=True)
+                    await client.send_message(BOT_USERNAME, "тмайнинг")
+                elif cmd.startswith(".т 2"):
+                    print(f"⌨️ [Аккаунт {current_acc_id}] Исходящая команда .т 2. Шлю 'тработа'", flush=True)
+                    await client.send_message(BOT_USERNAME, "тработа")
+                elif cmd.startswith(".ткарточка") or cmd.startswith(".ат"):
+                    print(f"⌨️ [Аккаунт {current_acc_id}] Исходящая команда карточки. Шлю 'ткарточка'", flush=True)
+                    await client.send_message(BOT_USERNAME, "ткарточка")
+            except Exception as e:
+                print(f"⚠️ Ошибка в обработчике команд .т: {e}", flush=True)
 
-                # ПРОВЕРКА ЛИЧНЫХ КОМАНД (Сравниваем ID отправителя с ID текущего аккаунта)
-                if message.from_user and message.from_user.id == client.my_telegram_id:
-                    cmd = message.text.strip().lower()
-                    if cmd.startswith(".т 1"):
-                        print(f"⌨️ [Аккаунт {current_acc_id}] Обнаружена команда .т 1. Шлю 'тмайнинг'", flush=True)
-                        await client.send_message(BOT_USERNAME, "тмайнинг")
-                        return
-                    elif cmd.startswith(".т 2"):
-                        print(f"⌨️ [Аккаунт {current_acc_id}] Обнаружена команда .т 2. Шлю 'тработа'", flush=True)
-                        await client.send_message(BOT_USERNAME, "тработа")
-                        return
-                    elif cmd.startswith(".ткарточка") or cmd.startswith(".ат"):
-                        print(f"⌨️ [Аккаунт {current_acc_id}] Обнаружена команда карточки. Шлю 'ткарточка'", flush=True)
-                        await client.send_message(BOT_USERNAME, "ткарточка")
-                        return
-
-                # ЛОГИКА ОТВЕТОВ БОТА PHONEGET
+        # ХЭНДЛЕР №2: Перехват ответов от самого бота PhoneGet
+        @cl.on_message(filters.incoming)
+        async def incoming_bot_handler(client, message, current_acc_id=i):
+            try:
                 is_target_bot = False
                 if message.from_user and (message.from_user.id == BOT_ID or message.from_user.username == "phonegetcardsbot"):
                     is_target_bot = True
@@ -303,7 +299,6 @@ async def start_bot():
 
                 if is_target_bot:
                     await process_bot_logic(client, message, current_acc_id)
-
             except Exception as handler_err:
                 pass
 
@@ -315,7 +310,7 @@ async def start_bot():
         if i in [1, 2]:
             asyncio.create_task(iris_farm_loop(cl, i))
 
-    print("🚀 Команды полностью переписаны на ID-проверку. Теперь они работают ВЕЗДЕ!", flush=True)
+    print("🚀 Фильтр outgoing добавлен. Команды гарантированно завелись во всех чатах!", flush=True)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
