@@ -263,6 +263,16 @@ async def basis_sync_loop(basis_client):
 # --- ГЛАВНЫЙ ОБРАБОТЧИК БОТА ---
 async def process_bot_logic(client, message, acc_id):
     if not message: return
+    
+    # ПРОВЕРКА НА БОТА ИЗ СТАРОГО КОДА (Пропускает и по юзернейму, и по названию чата)
+    is_bot = False
+    if message.chat and message.chat.username and message.chat.username.lower() == bot_chat.lower():
+        is_bot = True
+    elif message.from_user and message.from_user.username and message.from_user.username.lower() == bot_chat.lower():
+        is_bot = True
+        
+    if not is_bot: return  # Если это сообщение не от бота phoneget — игнорируем
+
     if not hasattr(client, "collecting"): client.collecting = False
 
     if message.reply_markup:
@@ -443,7 +453,7 @@ async def bg_tasks(client, acc_id):
 # --- СТАРТ ---
 async def start_bot():
     global clients
-    print("🛠 Перезапуск фермы с фиксом инициализации обновлений...", flush=True)
+    print("🛠 Возврат к проверенной структуре хэндлеров без фильтров...", flush=True)
 
     for i, session in enumerate(SESSIONS):
         if not session or session.strip() == "": continue
@@ -456,17 +466,14 @@ async def start_bot():
             in_memory=True,
         )
 
+        # Твои команды (.т)
         c.add_handler(handlers.MessageHandler(handle_my_messages, filters.me))
 
         try:
             await c.start()
             
-            # Активируем поток обновлений
+            # Активируем поток обновлений сессии
             await c.invoke(raw.functions.updates.GetState())
-            
-            # Динамически получаем железный ID бота (убирает баг пропущенных сообщений)
-            chat_info = await c.get_chat(bot_chat)
-            real_bot_id = chat_info.id
             
             clients.append(c)
             me = await c.get_me()
@@ -482,24 +489,21 @@ async def start_bot():
             else:
                 print(f"✅ Аккаунт {acc_id} запущен: @{me.username}", flush=True)
 
-            # Точный фильтр по железному ID чата бота
-            strict_bot_filter = filters.chat(real_bot_id)
-            
+            # 🔥 ВОЗВРАТ К СТАРЫМ РАБОЧИМ ХЭНДЛЕРАМ БЕЗ СТРОГИХ ФИЛЬТРОВ
+            # Всё фильтруется прямо внутри функции process_bot_logic
             c.add_handler(handlers.MessageHandler(
-                lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
-                strict_bot_filter
+                lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id)
             ), group=0)
 
             c.add_handler(handlers.EditedMessageHandler(
-                lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id),
-                strict_bot_filter
+                lambda client, message, a_id=acc_id: process_bot_logic(client, message, a_id)
             ), group=0)
             
             asyncio.create_task(bg_tasks(c, acc_id))
         except Exception as e:
             print(f"⚠️ Ошибка запуска аккаунта {i+1}: {e}", flush=True)
 
-    print("🚀 Скрипт готов к работе. Макросы и автопринятие активны.", flush=True)
+    print("🚀 Скрипт запущен в первоначальном режиме. Тестируй трейд!", flush=True)
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
