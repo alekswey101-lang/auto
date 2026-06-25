@@ -4,24 +4,24 @@ import asyncio
 import threading
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, RPCError
-from shadow_flask_fix import Flask  # Если используешь обычный Flask, замени на: from flask import Flask
+from flask import Flask
 
-# --- НАСТРОЙКИ ---
-API_ID = 12345678  # Вставь свой API ID
-API_HASH = "твой_api_hash"  # Вставь свой API HASH
-BOT_ID = 5701830574  # ID игрового бота PhoneGet
+# --- ДАННЫЕ ИЗ ENVIRONMENT VARIABLES RENDER ---
+API_ID = int(os.environ.get("API_ID", 0))
+API_HASH = os.environ.get("API_HASH", "")
+BOT_ID = 7808172033  # ID игрового бота PhoneGet
 AUTO_TRADE_ENABLED = True
 
-# Сессии твоих 5 аккаунтов. Порядок важен!
+# Подгружаем строки сессий из панели управления Render
 SESSIONS = [
-    "session_1",  # Твинк 1 (Индекс 1)
-    "session_2",  # ОСНОВА (Индекс 2 — сбор для неё отключен)
-    "session_3",  # Твинк 2 (Индекс 3)
-    "session_4",  # Твинк 3 (Индекс 4)
-    "session_5"   # Твинк 4 (Индекс 5)
+    os.environ.get("SESSION_1", ""),  # Твинк 1 (Индекс 1)
+    os.environ.get("SESSION_2", ""),  # ОСНОВА (Индекс 2 — автосбор отключен)
+    os.environ.get("SESSION_3", ""),  # Твинк 2 (Индекс 3)
+    os.environ.get("SESSION_4", ""),  # Твинк 3 (Индекс 4)
+    os.environ.get("SESSION_5", "")   # Твинк 4 (Индекс 5)
 ]
 
-OWNER_IDS = []  # Заполнится автоматически ID всех сессий при старте
+OWNER_IDS = []  # Наполняется автоматически при запуске скрипта
 clients = []
 twink_finished_event = asyncio.Event()
 
@@ -92,7 +92,7 @@ async def twink_collect_logic(client, acc_id):
                 await click(client, msg, "добавить телефон")
                 continue
 
-            # Выбор моделей (кнопки со смайликами телефонов или стрелочкой)
+            # Выбор моделей (кнопки со смайликами телефонов)
             if msg.reply_markup:
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
@@ -215,8 +215,13 @@ async def card_timer_loop(client, acc_id):
 async def start_bot():
     print("🤖 Запуск инициализации аккаунтов...", flush=True)
     
+    if not API_ID or not API_HASH:
+        print("❌ ОШИБКА: API_ID или API_HASH не заданы в переменных Render!", flush=True)
+        return
+
     # Шаг 1: Авто-сбор ID сессий
     for i, session in enumerate(SESSIONS, start=1):
+        if not session: continue
         try:
             temp_c = Client(session, api_id=API_ID, api_hash=API_HASH)
             await temp_c.start()
@@ -226,10 +231,11 @@ async def start_bot():
             prefix = "ОСНОВА" if i == 2 else f"Твинк {i if i < 2 else i-1}"
             print(f" Loaded Acc {i} ({prefix}): ID {me.id}", flush=True)
         except Exception as e:
-            print(f"❌ Не удалось прогрузить сессию {session}: {e}", flush=True)
+            print(f"❌ Не удалось прогрузить сессию {i}: {e}", flush=True)
 
     # Шаг 2: Регистрация обработчиков
     for i, session in enumerate(SESSIONS, start=1):
+        if not session: continue
         cl = Client(session, api_id=API_ID, api_hash=API_HASH)
         cl.card_timer_override = None
         cl.collecting = False
@@ -261,11 +267,9 @@ async def start_bot():
 
         await cl.start()
         clients.append(cl)
-        
-        # Карточки отправляют все 5 аккаунтов
         asyncio.create_task(card_timer_loop(cl, i))
 
-    print("🚀 Все 5 аккаунтов успешно запущены и защищены!", flush=True)
+    print("🚀 Все активные аккаунты успешно запущены и защищены!", flush=True)
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
