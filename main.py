@@ -279,12 +279,23 @@ async def process_bot_logic(client, message, acc_id):
     if message.from_user and message.from_user.username and message.from_user.username.lower() == bot_chat.lower(): is_game_bot = True
     if not is_game_bot: return
 
+    # --- АВТО-СНЯТИЕ ДЕНЕГ С МАЙНИНГА / ФЕРМЫ ---
     if message.reply_markup:
         for row in message.reply_markup.inline_keyboard:
             for btn in row:
                 if not btn.callback_data: continue
-                if any(x in btn.text.lower() for x in ["собрать деньги", "собрать прибыль", "забрать", "забрать✅"]) or "farm_claim" in btn.callback_data.lower():
+                b_text = btn.text.lower()
+                # Кликер по кнопкам снятия баланса с фермы/майнинга
+                if any(x in b_text for x in [
+                    "снять деньги с фермы", 
+                    "снять прибыль", 
+                    "собрать деньги", 
+                    "собрать прибыль", 
+                    "забрать", 
+                    "забрать✅"
+                ]) or "farm_claim" in btn.callback_data.lower() or "claim" in btn.callback_data.lower():
                     try:
+                        print(f"💰 [Аккаунт {acc_id}] Нажимаю кнопку: '{btn.text}' (Снятие денег с майнинга)", flush=True)
                         await client.request_callback_answer(message.chat.id, message.id, btn.callback_data, timeout=2)
                         return
                     except: pass
@@ -419,14 +430,12 @@ async def bg_tasks(client, acc_id):
                 if msk_now.hour == 1 and msk_now.minute == 2:
                     reward_claimed_today = False
 
-            # Сбор майнинга (00:10 МСК)
-            if msk_now.hour == 0 and msk_now.minute == 10:
-                if not claimed_today:
+            # Сбор майнинга (каждые 3 часа юзербот отправляет "тмайнинг", чтобы снять прибыль)
+            if msk_now.minute == 15 and msk_now.hour % 3 == 0:
+                try:
+                    print(f"⛏ [Аккаунт {acc_id}] Плановый сбор майнинга ('тмайнинг')", flush=True)
                     await client.send_message(client.game_bot_id, "тмайнинг")
-                    claimed_today = True
-            else:
-                if msk_now.hour == 0 and msk_now.minute == 11: 
-                    claimed_today = False
+                except: pass
 
             # Таймер ФАРМЫ (каждые 4 часа / 240 минут)
             if acc_id in [1, 2] and client.iris_bot_id:
@@ -463,7 +472,7 @@ async def start_bot():
             await c.start()
             await c.invoke(raw.functions.updates.GetState())
 
-            # ЖЕЛЕЗОБЕТОННЫЙ РЕЗОЛВ ID БОТОВ (Защита от ошибки неотправки сообщений)
+            # Резолв ID ботов
             try:
                 game_peer = await c.get_chat(bot_chat)
                 c.game_bot_id = game_peer.id
